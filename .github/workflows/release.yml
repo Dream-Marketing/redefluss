@@ -1,9 +1,11 @@
 name: Release
 
 # Neues Release: git tag v0.2.0 && git push origin v0.2.0
+# Probelauf ohne Veröffentlichung: Actions → Release → „Run workflow" (Artefakte statt Release).
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -54,12 +56,26 @@ jobs:
           echo "SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
       - name: App bauen (Universal)
-        run: VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-app.sh
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.0-probe"; fi
+          VERSION="$VERSION" ./scripts/build-app.sh
+          codesign -dv dist/Redefluss.app 2>&1 | grep -E "Authority|Signature|Identifier"
 
       - name: DMG + ZIP
         run: ./scripts/package.sh
 
+      - name: Probelauf-Artefakte
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: redefluss-probe
+          path: |
+            dist/Redefluss-*.dmg
+            dist/Redefluss-*.zip
+          retention-days: 7
+
       - name: GitHub-Release
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

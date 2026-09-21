@@ -1,0 +1,11 @@
+.DS_Store
+/.build/
+/.swiftpm/
+/Vendor/
+/dist/
+/snapshots/
+*.xcodeproj
+xcuserdata/
+# Signatur-Material liegt außerhalb des Repos (~/.redefluss-signing), sicherheitshalber:
+*.p12
+*.keychain-db

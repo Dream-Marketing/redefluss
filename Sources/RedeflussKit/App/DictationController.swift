@@ -193,7 +193,11 @@ public final class DictationController: ObservableObject {
     }
 
     private func beginRecording(handsFree: Bool) {
-        guard phase == .idle else { return }
+        // Während noch transkribiert wird, keine neue Aufnahme – und die Taste nicht im Freihand-Zustand hängen lassen.
+        guard phase == .idle else {
+            if phase == .transcribing { hotkey.reset() }
+            return
+        }
 
         guard modelState.isUsable else {
             hotkey.reset()

@@ -104,11 +104,19 @@ Modelle kommen von [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co
 
 ## Selbst bauen
 
-Voraussetzungen: macOS 14+, Xcode 16+.
+Voraussetzungen: macOS 14+ und Swift – die Command Line Tools reichen (`xcode-select --install`), Xcode ist nicht nötig.
 
 ```sh
 git clone https://github.com/Dream-Marketing/redefluss.git
 cd redefluss
+make install    # baut für diesen Mac, installiert nach /Applications, lädt das Modell, startet
+```
+
+Selbst gebaute Apps werden von Gatekeeper nicht blockiert. Mikrofon und Bedienungshilfen musst du trotzdem einmal selbst erlauben.
+
+> **Mit Claude Code:** Repo klonen, darin `claude` starten und „installier Redefluss" sagen – die `CLAUDE.md` im Repo erklärt Claude die Schritte.
+
+```sh
 make run        # baut dist/Redefluss.app für diesen Mac und startet sie
 make test       # Unit-Tests (+ Ende-zu-Ende-Test, falls ein Modell in ~/.cache/whisper-cpp liegt)
 make dmg        # Universal-Build (Apple Silicon + Intel) + DMG/ZIP

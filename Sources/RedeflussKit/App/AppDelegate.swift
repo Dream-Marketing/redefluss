@@ -31,6 +31,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         if !settings.onboardingDone {
             showOnboarding()
+        } else if !Permissions.accessibilityGranted || !Permissions.microphoneGranted {
+            // Z. B. nach einem Update mit neuer Signatur: Berechtigungen sind weg, also direkt zeigen, wo es hakt.
+            showSettings(tab: .general)
         }
     }
 

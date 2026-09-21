@@ -1,4 +1,4 @@
-.PHONY: app run test dmg snapshots clean
+.PHONY: app run install test dmg snapshots clean
 
 # Schneller lokaler Build nur für diesen Mac.
 app:
@@ -7,6 +7,10 @@ app:
 run: app
 	-pkill -x Redefluss
 	open dist/Redefluss.app
+
+# Bauen und nach /Applications installieren (inkl. Sprachmodell).
+install:
+	./scripts/install.sh --with-model
 
 test:
 	./scripts/fetch-whisper.sh

@@ -66,16 +66,25 @@ public final class TextInserter {
         }
     }
 
+    /// ⌘ drücken, V drücken/loslassen, ⌘ loslassen – wie eine echte Tastatur.
+    /// Manche Apps (Electron, Browser) werten den Modifier-Zustand über eigene
+    /// flagsChanged-Events aus; ein nacktes V-mit-⌘-Flag reicht dort nicht.
     private func postPaste() {
         let source = CGEventSource(stateID: .hidSystemState)
-        let keyCode = CGKeyCode(KeyboardLayout.keyCode(for: "v") ?? CGKeyCode(kVK_ANSI_V))
-        let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
-        let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+        let vKey = CGKeyCode(KeyboardLayout.keyCode(for: "v") ?? CGKeyCode(kVK_ANSI_V))
+        let commandKey = CGKeyCode(kVK_Command)
+
+        let events = [
+            CGEvent(keyboardEventSource: source, virtualKey: commandKey, keyDown: true),
+            CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
+            CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false),
+            CGEvent(keyboardEventSource: source, virtualKey: commandKey, keyDown: false),
+        ]
         // Flags explizit setzen – sonst mischt sich ein evtl. noch gedrücktes Fn/⌥ hinein.
-        down?.flags = .maskCommand
-        up?.flags = .maskCommand
-        down?.post(tap: .cgAnnotatedSessionEventTap)
-        up?.post(tap: .cgAnnotatedSessionEventTap)
+        for (index, event) in events.enumerated() {
+            event?.flags = index == 3 ? [] : .maskCommand
+            event?.post(tap: .cghidEventTap)
+        }
     }
 }
 

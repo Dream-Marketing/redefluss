@@ -69,17 +69,19 @@ fi
 # --- Alte Kopien entfernen ---------------------------------------------------
 # Sonst zeigt Spotlight zwei „Redefluss": die installierte und die aus dist/, Downloads oder ~/Programme.
 rm -rf dist/Redefluss.app   # nach dem Kopieren nicht mehr nötig; make run/dmg bauen sie neu
+# (Jeder Schritt hier darf fehlschlagen, ohne die Installation abzubrechen – set -e/pipefail.)
 {
   mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true
   for p in "$HOME/Applications/Redefluss.app" "$HOME/Downloads/Redefluss.app" "$HOME/Desktop/Redefluss.app"; do
-    [[ -d "$p" ]] && echo "$p"
+    if [[ -d "$p" ]]; then echo "$p"; fi
   done
+  true
 } | sort -u | while IFS= read -r app; do
-  [[ -z "$app" || ! -d "$app" ]] && continue
-  [[ "$app" == "$TARGET" || "$app" == /Volumes/* || "$app" == "$ROOT/.build/"* ]] && continue
+  if [[ -z "$app" || ! -d "$app" ]]; then continue; fi
+  if [[ "$app" == "$TARGET" || "$app" == /Volumes/* || "$app" == "$ROOT/.build/"* ]]; then continue; fi
   echo "▸ Alte Kopie in den Papierkorb: $app"
-  mv "$app" "$HOME/.Trash/Redefluss $(date +%Y-%m-%d_%H%M%S).app" 2>/dev/null || rm -rf "$app"
-done
+  mv "$app" "$HOME/.Trash/Redefluss $(date +%Y-%m-%d_%H%M%S).app" 2>/dev/null || rm -rf "$app" || true
+done || true
 
 # --- Optional: Modell --------------------------------------------------------
 if (( WITH_MODEL )); then

@@ -25,7 +25,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         controller.start()
 
         controller.$phase
-            .combineLatest(controller.$hotkeyActive, controller.$modelState)
+            .combineLatest(controller.$hotkeyActive, controller.$modelState, controller.meeting.$state)
             .sink { [weak self] _ in self?.updateStatusIcon() }
             .store(in: &cancellables)
 
@@ -34,6 +34,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         } else if !Permissions.accessibilityGranted || !Permissions.microphoneGranted {
             // Z. B. nach einem Update mit neuer Signatur: Berechtigungen sind weg, also direkt zeigen, wo es hakt.
             showSettings(tab: .general)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.offerToRemoveStaleCopies() }
+    }
+
+    // MARK: - Alte Kopien
+
+    /// Nach einem Update liegt oft noch eine ältere Redefluss.app herum (Downloads, ~/Programme, Build-Ordner) –
+    /// Spotlight zeigt dann zwei. Läuft diese App aus /Applications, bieten wir an, die anderen in den Papierkorb zu legen.
+    private func offerToRemoveStaleCopies() {
+        let stale = StaleCopies.find()
+        guard !stale.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = stale.count == 1 ? "Ältere Kopie von Redefluss gefunden" : "Ältere Kopien von Redefluss gefunden"
+        alert.informativeText = "Diese Version läuft aus dem Programme-Ordner. Daneben gibt es noch:\n\n"
+            + stale.map { "• " + $0.path.replacingOccurrences(of: NSHomeDirectory(), with: "~") }.joined(separator: "\n")
+            + "\n\nSoll Redefluss sie in den Papierkorb legen? Sonst erscheint die App doppelt in Spotlight."
+        alert.addButton(withTitle: "In den Papierkorb legen")
+        alert.addButton(withTitle: "Behalten")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            StaleCopies.trash(stale)
+        } else {
+            StaleCopies.ignore(stale)
         }
     }
 
@@ -108,7 +131,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         case .idle:
             let ready: Bool
             if case .ready = controller.modelState { ready = true } else { ready = false }
-            symbol = controller.hotkeyActive && ready ? "waveform" : "waveform.slash"
+            if controller.meeting.isActive {
+                symbol = "record.circle"
+            } else {
+                symbol = controller.hotkeyActive && ready ? "waveform" : "waveform.slash"
+            }
         }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Redefluss")
         image?.isTemplate = true
@@ -136,6 +163,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
             secure.isEnabled = false
             menu.addItem(secure)
         }
+
+        menu.addItem(.separator())
+
+        switch controller.meeting.state {
+        case .recording(let appName, _):
+            menu.addItem(item("Meeting-Mitschrift beenden (\(appName))", #selector(stopMeeting)))
+        case .finishing:
+            let finishing = NSMenuItem(title: "Meeting wird gespeichert …", action: nil, keyEquivalent: "")
+            finishing.isEnabled = false
+            menu.addItem(finishing)
+        case .idle:
+            let start = item("Meeting jetzt mitschreiben", #selector(startMeeting))
+            start.isEnabled = controller.modelState.isUsable
+            menu.addItem(start)
+        }
+        let auto = item("Meetings automatisch mitschreiben", #selector(toggleMeetingAutoRecord))
+        auto.state = settings.meetingAutoRecord ? .on : .off
+        auto.isEnabled = MeetingDetector.isSupported
+        menu.addItem(auto)
 
         menu.addItem(.separator())
 
@@ -178,6 +224,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         case .transcribing: return "Schreibt …"
         case .idle: break
         }
+        if case .recording(let appName, _) = controller.meeting.state {
+            return "Meeting läuft (\(appName)) · \(MeetingRecorder.clock(controller.meeting.elapsed))"
+        }
         switch controller.modelState {
         case .loading(let name): return "Lädt \(name) …"
         case .failed: return "Modell konnte nicht geladen werden"
@@ -212,6 +261,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     @objc private func openHistory() { showSettings(tab: .history) }
     @objc private func openSettings() { showSettings(tab: .general) }
     @objc private func pasteLast() { controller.pasteLast() }
+    @objc private func startMeeting() { controller.startMeetingManually() }
+    @objc private func stopMeeting() { controller.stopMeeting() }
+    @objc private func toggleMeetingAutoRecord() { settings.meetingAutoRecord.toggle() }
     @objc private func copyLast() { controller.copyLast() }
     @objc private func quit() { NSApp.terminate(nil) }
 
@@ -263,5 +315,45 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func present(_ window: NSWindow?) {
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+}
+
+/// Findet weitere Kopien dieser App (gleiche Bundle-ID) und räumt sie auf Wunsch weg.
+enum StaleCopies {
+    private static let ignoredKey = "ignoredStaleCopies"
+
+    /// Andere Kopien mit höchstens dieser Build-Nummer – nur wenn diese App selbst in /Applications liegt.
+    static func find() -> [URL] {
+        let own = Bundle.main.bundleURL.standardizedFileURL
+        guard let bundleID = Bundle.main.bundleIdentifier,
+              own.path.hasPrefix("/Applications/") else { return [] }
+        let ownBuild = buildNumber(of: Bundle.main)
+        let ignored = Set(UserDefaults.standard.stringArray(forKey: ignoredKey) ?? [])
+        return NSWorkspace.shared.urlsForApplications(withBundleIdentifier: bundleID)
+            .map(\.standardizedFileURL)
+            .filter { url in
+                url != own
+                    && !url.path.hasPrefix("/Volumes/")          // eingehängte DMGs sind schreibgeschützt
+                    && !ignored.contains(url.path)
+                    && FileManager.default.fileExists(atPath: url.path)
+                    && (Bundle(url: url).map { buildNumber(of: $0) <= ownBuild } ?? true)
+            }
+            .sorted { $0.path < $1.path }
+    }
+
+    static func trash(_ urls: [URL]) {
+        for url in urls {
+            try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        }
+    }
+
+    static func ignore(_ urls: [URL]) {
+        var ignored = UserDefaults.standard.stringArray(forKey: ignoredKey) ?? []
+        ignored.append(contentsOf: urls.map(\.path))
+        UserDefaults.standard.set(Array(Set(ignored)), forKey: ignoredKey)
+    }
+
+    private static func buildNumber(of bundle: Bundle) -> Int {
+        Int((bundle.infoDictionary?["CFBundleVersion"] as? String) ?? "") ?? 0
     }
 }

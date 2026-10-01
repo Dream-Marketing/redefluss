@@ -22,11 +22,14 @@ public enum SnapshotRenderer {
             ("recording", .recording),
             ("handsfree", .handsFree),
             ("transcribing", .transcribing),
+            ("meeting", .meeting("Zoom")),
+            ("meeting-finishing", .meetingFinishing),
             ("message", .message("Kein Sprachmodell – hier klicken", isError: true)),
         ]
         for (name, mode) in bars {
             let model = FlowBarModel()
             model.mode = mode
+            model.meetingClock = "12:34"
             model.levels = [0.1, 0.25, 0.5, 0.8, 0.6, 0.95, 0.7, 0.45, 0.85, 0.55, 0.3, 0.6, 0.2, 0.1]
             let view = FlowBarView(model: model)
                 .background(LinearGradient(colors: [Color(white: 0.93), Color(white: 0.82)], startPoint: .top, endPoint: .bottom))

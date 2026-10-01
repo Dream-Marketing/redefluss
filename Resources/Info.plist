@@ -33,7 +33,9 @@
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT-Lizenz · Transkription mit whisper.cpp (MIT)</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Redefluss nimmt nur auf, solange du die Diktiertaste hältst, und transkribiert lokal auf deinem Mac.</string>
+	<string>Redefluss nimmt auf, solange du die Diktiertaste hältst oder ein Meeting mitgeschrieben wird, und transkribiert lokal auf deinem Mac.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Für die Meeting-Mitschrift nimmt Redefluss das Systemaudio (die anderen Teilnehmer) auf und transkribiert es lokal auf deinem Mac. Es wird kein Audio gespeichert.</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>

@@ -25,7 +25,7 @@ dmg:
 snapshots: app
 	rm -rf snapshots
 	dist/Redefluss.app/Contents/MacOS/Redefluss --snapshot snapshots
-	magick snapshots/flowbar-idle.png snapshots/flowbar-recording.png snapshots/flowbar-handsfree.png snapshots/flowbar-transcribing.png -append docs/images/flowbar.png
+	magick snapshots/flowbar-idle.png snapshots/flowbar-recording.png snapshots/flowbar-handsfree.png snapshots/flowbar-transcribing.png snapshots/flowbar-meeting.png -append docs/images/flowbar.png
 	magick snapshots/onboarding-0.png -resize 80% docs/images/onboarding.png
 	magick snapshots/onboarding-3.png -resize 80% docs/images/hotkey.png
 	magick snapshots/settings-general.png -resize 80% docs/images/settings.png

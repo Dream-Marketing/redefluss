@@ -3,6 +3,7 @@ import Carbon.HIToolbox
 import Combine
 
 /// Herzstück: verbindet Taste → Aufnahme → whisper.cpp → Nachbearbeitung → Einfügen.
+/// Dazu die Meeting-Mitschrift: erkennt fremde Mikrofon-Nutzung und schreibt automatisch mit.
 public final class DictationController: ObservableObject {
     public enum Phase: Equatable {
         case idle
@@ -28,11 +29,14 @@ public final class DictationController: ObservableObject {
     @Published public private(set) var modelState: ModelState = .none
     @Published public private(set) var hotkeyActive = false
     @Published public private(set) var lastTranscript: String?
+    /// Apps, die gerade das Mikrofon benutzen (für die Statusanzeige in den Einstellungen).
+    @Published public private(set) var microphoneUsers: [MicrophoneUser] = []
 
     public let settings: AppSettings
     public let models: ModelManager
     public let history: HistoryStore
     public let flowBar = FlowBarController()
+    public let meeting: MeetingRecorder
 
     /// Wird aufgerufen, wenn der Nutzer die Einstellungen sehen sollte (z. B. kein Modell).
     public var onNeedsAttention: ((SettingsTab) -> Void)?
@@ -42,6 +46,7 @@ public final class DictationController: ObservableObject {
     private let transcriber = WhisperTranscriber()
     private let inserter = TextInserter()
     private let sounds = SoundPlayer()
+    private let detector = MeetingDetector()
 
     private var recordingStarted: Date?
     private var lastStartSound: Date = .distantPast
@@ -49,6 +54,7 @@ public final class DictationController: ObservableObject {
     private var targetApp: NSRunningApplication?
     private var maxDurationTimer: Timer?
     private var permissionTimer: Timer?
+    private var meetingClockTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
 
     /// Obergrenze pro Diktat – danach wird automatisch transkribiert.
@@ -58,6 +64,7 @@ public final class DictationController: ObservableObject {
         self.settings = settings
         self.models = models
         self.history = history
+        self.meeting = MeetingRecorder(transcriber: transcriber, history: history, settings: settings)
     }
 
     // MARK: - Start
@@ -65,14 +72,13 @@ public final class DictationController: ObservableObject {
     public func start() {
         hotkey.onEvent = { [weak self] event in self?.handle(event) }
         recorder.onLevel = { [weak self] level in self?.flowBar.model.push(level: level) }
+        recorder.onInterruption = { [weak self] in self?.recordingInterrupted() }
 
         flowBar.model.onStartHandsFree = { [weak self] in self?.startFromBar() }
         flowBar.model.onStop = { [weak self] in self?.finishRecording() }
         flowBar.model.onCancel = { [weak self] in self?.cancelRecording(settle: false) }
-        flowBar.model.onMessageTap = { [weak self] in
-            guard let self else { return }
-            if case .ready = self.modelState {} else { self.onNeedsAttention?(.model) }
-        }
+        flowBar.model.onStopMeeting = { [weak self] in self?.meeting.stop() }
+        flowBar.onPositionChange = { [weak self] position in self?.settings.flowBarPosition = position }
 
         settings.$hotkey
             .sink { [weak self] key in
@@ -85,6 +91,9 @@ public final class DictationController: ObservableObject {
             .store(in: &cancellables)
         settings.$showIdlePill
             .sink { [weak self] show in self?.flowBar.showIdle = show }
+            .store(in: &cancellables)
+        settings.$flowBarPosition
+            .sink { [weak self] position in self?.flowBar.position = position }
             .store(in: &cancellables)
         settings.$modelPath
             .dropFirst()
@@ -110,6 +119,7 @@ public final class DictationController: ObservableObject {
             .sink { [weak self] _ in if self?.phase == .idle { self?.flowBar.show() } }
             .store(in: &cancellables)
 
+        setUpMeetings()
         startHotkeyWhenTrusted()
         loadInitialModel()
     }
@@ -202,7 +212,9 @@ public final class DictationController: ObservableObject {
         guard modelState.isUsable else {
             hotkey.reset()
             sounds.play(.error)
-            flowBar.showMessage("Kein Sprachmodell – hier klicken", isError: true, duration: 3.5)
+            flowBar.showMessage("Kein Sprachmodell – hier klicken", isError: true, duration: 3.5) { [weak self] in
+                self?.onNeedsAttention?(.model)
+            }
             return
         }
 
@@ -216,7 +228,9 @@ public final class DictationController: ObservableObject {
         default:
             hotkey.reset()
             sounds.play(.error)
-            flowBar.showMessage("Kein Mikrofonzugriff – Systemeinstellungen prüfen", isError: true, duration: 3.5)
+            flowBar.showMessage("Kein Mikrofonzugriff – Systemeinstellungen prüfen", isError: true, duration: 3.5) {
+                Permissions.openMicrophoneSettings()
+            }
             return
         }
 
@@ -245,6 +259,14 @@ public final class DictationController: ObservableObject {
             self?.hotkey.reset()
             self?.finishRecording()
         }
+    }
+
+    /// Das Mikrofon ist während des Diktats weggefallen oder gewechselt (AirPods, Headset) –
+    /// die Engine liefert dann nichts mehr. Also beenden und das bis dahin Gesagte verwenden.
+    private func recordingInterrupted() {
+        guard case .recording = phase else { return }
+        hotkey.reset()
+        finishRecording()
     }
 
     /// - Parameter settle: Leiste kurz stehen lassen – nach einem kurzen Tipp kommt oft
@@ -288,7 +310,7 @@ public final class DictationController: ObservableObject {
 
         let processor = TextPostProcessor(removeFillers: settings.removeFillers, replacements: settings.replacements)
         let targetApp = self.targetApp
-        transcriber.transcribe(samples: samples, language: settings.language, prompt: vocabularyPrompt()) { [weak self] result in
+        transcriber.transcribe(samples: samples, language: settings.language, prompt: settings.whisperPrompt) { [weak self] result in
             guard let self else { return }
             self.phase = .idle
             switch result {
@@ -309,7 +331,8 @@ public final class DictationController: ObservableObject {
                         text: cleaned,
                         audioSeconds: seconds,
                         appName: targetApp?.localizedName,
-                        language: transcription.language
+                        language: transcription.language,
+                        kind: .dictation
                     ))
                 }
             }
@@ -346,18 +369,94 @@ public final class DictationController: ObservableObject {
         inserter.copyToClipboard(lastTranscript.trimmingCharacters(in: .whitespaces))
     }
 
-    /// Eigene Wörter als Kontext für Whisper; lange Listen werden gekürzt (Prompt ≈ 224 Tokens).
-    private func vocabularyPrompt() -> String {
-        let words = settings.dictionary
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard !words.isEmpty else { return "" }
-        var prompt = ""
-        for word in words {
-            let next = prompt.isEmpty ? word : prompt + ", " + word
-            if next.count > 600 { break }
-            prompt = next
+    // MARK: - Meetings
+
+    private func setUpMeetings() {
+        detector.onPoll = { [weak self] users in self?.microphoneUsers = users }
+        detector.onStart = { [weak self] users in self?.meetingDetected(users) }
+        detector.onEnd = { [weak self] in
+            // Die Meeting-App hat das Mikrofon freigegeben → Mitschrift abschließen.
+            if case .recording = self?.meeting.state { self?.meeting.stop() }
         }
-        return prompt + "."
+        settings.$meetingAutoRecord
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                if enabled { self.detector.start() } else { self.detector.stop(); self.microphoneUsers = [] }
+            }
+            .store(in: &cancellables)
+
+        meeting.onLevel = { [weak self] level in
+            guard let self, case .meeting = self.flowBar.model.mode else { return }
+            self.flowBar.model.push(level: level)
+        }
+        meeting.onFinished = { [weak self] item in
+            guard let self else { return }
+            if item == nil {
+                self.flowBar.showMessage("Meeting ohne Sprache – nichts gespeichert", duration: 3)
+            } else {
+                self.flowBar.showMessage("Meeting-Mitschrift im Verlauf gespeichert", duration: 4) { [weak self] in
+                    self?.onNeedsAttention?(.history)
+                }
+            }
+        }
+        meeting.$state
+            .sink { [weak self] state in self?.meetingStateChanged(state) }
+            .store(in: &cancellables)
+    }
+
+    private func meetingDetected(_ users: [MicrophoneUser]) {
+        guard settings.meetingAutoRecord, !meeting.isActive else { return }
+        guard modelState.isUsable else {
+            flowBar.showMessage("Meeting erkannt – kein Sprachmodell zum Mitschreiben", isError: true, duration: 4) { [weak self] in
+                self?.onNeedsAttention?(.model)
+            }
+            return
+        }
+        let names = Array(Set(users.map(\.name))).sorted()
+        startMeeting(appName: names.first ?? "Meeting")
+    }
+
+    /// Mitschrift von Hand starten (Menü) – z. B. für ein Gespräch ohne Meeting-App.
+    public func startMeetingManually() {
+        guard modelState.isUsable else {
+            onNeedsAttention?(.model)
+            return
+        }
+        let names = microphoneUsers.map(\.name)
+        startMeeting(appName: names.first ?? "Meeting")
+    }
+
+    private func startMeeting(appName: String) {
+        do {
+            try meeting.start(appName: appName)
+        } catch {
+            sounds.play(.error)
+            flowBar.showMessage(error.localizedDescription, isError: true, duration: 4)
+        }
+    }
+
+    public func stopMeeting() {
+        meeting.stop()
+    }
+
+    private func meetingStateChanged(_ state: MeetingRecorder.State) {
+        meetingClockTimer?.invalidate()
+        meetingClockTimer = nil
+        switch state {
+        case .idle:
+            flowBar.meetingFinishing = false
+            flowBar.meetingLabel = nil
+        case .recording(let appName, _):
+            flowBar.meetingFinishing = false
+            flowBar.model.meetingClock = MeetingRecorder.clock(0)
+            flowBar.meetingLabel = appName
+            meetingClockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.flowBar.model.meetingClock = MeetingRecorder.clock(self.meeting.elapsed)
+            }
+        case .finishing:
+            flowBar.meetingLabel = nil
+            flowBar.meetingFinishing = true
+        }
     }
 }

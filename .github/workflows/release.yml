@@ -88,11 +88,24 @@ jobs:
              **Systemeinstellungen → Datenschutz & Sicherheit → „Trotzdem öffnen"**.
              Alternativ im Terminal: `xattr -dr com.apple.quarantine /Applications/Redefluss.app`
           3. Der Einführung folgen: Mikrofon + Bedienungshilfen erlauben, Sprachmodell laden (~574 MB, einmalig).
+          4. **Update von einer älteren Version:** Die neue App in Programme ziehen und „Ersetzen" wählen. Liegt die alte Kopie woanders, bietet Redefluss beim Start an, sie in den Papierkorb zu legen.
 
           Dann: **Fn halten → sprechen → loslassen.** Doppeltipp auf Fn = Dauer-Modus.
+          Beim ersten Meeting fragt macOS nach der Erlaubnis für Systemaudio – bestätigen, sonst wird nur das eigene Mikrofon mitgeschrieben.
 
           Kein Konto, keine Cloud – alles läuft lokal mit whisper.cpp.
           EOF
           sed -i '' "s/VERSION/$VERSION/g" "$RUNNER_TEMP/notes.md"
+          # Abschnitt dieser Version aus CHANGELOG.md voranstellen.
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v v="$VERSION" '
+              /^## / { show = index($0, "## " v " ") == 1 || $0 == "## " v }
+              show { print }
+            ' CHANGELOG.md | sed '1s/^## .*/## Neu in dieser Version/' > "$RUNNER_TEMP/changes.md"
+            if [[ -s "$RUNNER_TEMP/changes.md" ]]; then
+              cat "$RUNNER_TEMP/changes.md" "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/all.md"
+              mv "$RUNNER_TEMP/all.md" "$RUNNER_TEMP/notes.md"
+            fi
+          fi
           gh release create "$GITHUB_REF_NAME" dist/Redefluss-*.dmg dist/Redefluss-*.zip \
             --title "Redefluss $VERSION" --notes-file "$RUNNER_TEMP/notes.md"

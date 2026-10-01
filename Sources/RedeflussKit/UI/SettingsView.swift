@@ -136,9 +136,45 @@ private struct GeneralPane: View {
                 Toggle("Zwischenablage nach dem Einfügen wiederherstellen", isOn: $settings.restoreClipboard)
             }
 
+            Section {
+                Toggle("Meetings automatisch mitschreiben", isOn: $settings.meetingAutoRecord)
+                    .disabled(!MeetingDetector.isSupported)
+                Toggle("Andere Teilnehmer mitschreiben (Systemaudio)", isOn: $settings.meetingSystemAudio)
+                    .disabled(!MeetingDetector.isSupported || !settings.meetingAutoRecord)
+                if !MeetingDetector.isSupported {
+                    Text("Braucht macOS 14.2 oder neuer.").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    meetingStatus
+                }
+                if let problem = controller.meeting.systemAudioProblem {
+                    HStack(alignment: .firstTextBaseline) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Systemaudio ließ sich zuletzt nicht aufnehmen – es wurde nur das Mikrofon mitgeschrieben.")
+                            Text(problem).font(.callout).foregroundStyle(.secondary)
+                            Button("Berechtigung „Systemaudioaufnahme“ prüfen") { Permissions.openAudioCaptureSettings() }
+                                .buttonStyle(.link)
+                        }
+                    }
+                }
+            } header: {
+                Text("Meetings")
+            } footer: {
+                Footnote("Sobald eine andere App (Zoom, Teams, FaceTime, der Browser …) das Mikrofon nutzt, schreibt Redefluss das Gespräch mit und legt den Text im Verlauf ab – nichts wird eingefügt, kein Audio gespeichert. Beim ersten Mal fragt macOS nach der Erlaubnis für Systemaudio. Teilnehmende vorher informieren.")
+            }
+
             Section("Darstellung & System") {
                 Toggle("Töne bei Start und Ende", isOn: $settings.playSounds)
                 Toggle("Leiste auch im Ruhezustand zeigen", isOn: $settings.showIdlePill)
+                LabeledContent("Leiste verschieben") {
+                    HStack {
+                        Text(settings.flowBarPosition == nil ? "Unten mittig (ziehen zum Verschieben)" : "Eigene Position")
+                            .foregroundStyle(.secondary)
+                        if settings.flowBarPosition != nil {
+                            Button("Zurücksetzen") { settings.flowBarPosition = nil }
+                        }
+                    }
+                }
                 Toggle("Diktate im Verlauf speichern", isOn: $settings.saveHistory)
                 Toggle("Beim Anmelden starten", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
@@ -153,6 +189,27 @@ private struct GeneralPane: View {
         .onReceive(refresh) { _ in
             accessibility = Permissions.accessibilityGranted
             microphone = Permissions.microphoneGranted
+        }
+    }
+
+    @ViewBuilder
+    private var meetingStatus: some View {
+        switch controller.meeting.state {
+        case .recording(let appName, _):
+            Label("Mitschrift läuft: \(appName)", systemImage: "record.circle").foregroundStyle(.red)
+        case .finishing:
+            Label("Mitschrift wird gespeichert …", systemImage: "ellipsis.circle").foregroundStyle(.secondary)
+        case .idle:
+            if !settings.meetingAutoRecord {
+                Text("Aus – im Menüleisten-Symbol lässt sich eine Mitschrift auch von Hand starten.")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else if controller.microphoneUsers.isEmpty {
+                Text("Gerade nutzt keine andere App das Mikrofon.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                let names = Array(Set(controller.microphoneUsers.map(\.name))).sorted().joined(separator: ", ")
+                Label("Mikrofon in Benutzung: \(names) – Mitschrift startet gleich", systemImage: "mic.fill")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -403,6 +460,7 @@ private struct HistoryPane: View {
     @ObservedObject var history: HistoryStore
     @State private var search = ""
     @State private var copiedID: UUID?
+    @State private var expanded: Set<UUID> = []
 
     private var filtered: [HistoryItem] {
         let query = search.trimmingCharacters(in: .whitespaces)
@@ -413,13 +471,34 @@ private struct HistoryPane: View {
     var body: some View {
         VStack(spacing: 0) {
             if history.items.isEmpty {
-                ContentUnavailableView("Noch keine Diktate", systemImage: "waveform", description: Text("Halte die Diktiertaste und sprich – hier erscheint alles, was du diktiert hast."))
+                ContentUnavailableView("Noch keine Diktate", systemImage: "waveform", description: Text("Halte die Diktiertaste und sprich – hier erscheint alles, was du diktiert hast, und die Mitschriften deiner Meetings."))
             } else {
                 List {
                     ForEach(filtered) { item in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(item.text)
-                                .textSelection(.enabled)
+                            if item.isMeeting {
+                                HStack(spacing: 6) {
+                                    Image(systemName: item.inProgress == true ? "record.circle" : "person.2.fill")
+                                        .foregroundStyle(item.inProgress == true ? .red : .secondary)
+                                    Text(item.inProgress == true ? "Meeting · läuft noch" : "Meeting · \(MeetingRecorder.clock(item.audioSeconds))")
+                                        .font(.callout.weight(.medium))
+                                }
+                            }
+                            if item.text.isEmpty {
+                                Text(item.inProgress == true ? "Noch nichts erkannt …" : "Nichts erkannt")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text(item.text)
+                                    .textSelection(.enabled)
+                                    .lineLimit(item.isMeeting && !expanded.contains(item.id) ? 6 : nil)
+                            }
+                            if item.isMeeting, item.text.count > 400 {
+                                Button(expanded.contains(item.id) ? "Weniger anzeigen" : "Ganze Mitschrift anzeigen") {
+                                    if expanded.contains(item.id) { expanded.remove(item.id) } else { expanded.insert(item.id) }
+                                }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                            }
                             HStack(spacing: 6) {
                                 Text(item.date, format: .dateTime.day().month().hour().minute())
                                 if let app = item.appName { Text("· \(app)") }

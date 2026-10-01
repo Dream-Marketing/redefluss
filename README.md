@@ -32,6 +32,8 @@ Redefluss ist eine freie, quelloffene Alternative zur Diktierfunktion von [Wispr
 | **Fn + Leertaste** | Aus dem Halten in den Dauer-Modus wechseln |
 | **Esc** | Aufnahme verwerfen |
 | **⌃⌘V** | Letztes Diktat noch einmal einfügen |
+| **Meeting beginnt** | Sobald Zoom, Teams, FaceTime oder der Browser das Mikrofon nutzen, schreibt Redefluss das Gespräch mit – der Text landet im Verlauf |
+| **Leiste ziehen** | Die Leiste unten lässt sich an jede Stelle schieben; nahe der Mitte rastet sie wieder ein |
 
 Funktioniert in jeder App mit Textfeld: Mail, Slack, Notizen, Browser, Word, VS Code, Terminal …
 
@@ -51,6 +53,7 @@ Funktioniert in jeder App mit Textfeld: Mail, Slack, Notizen, Browser, Word, VS 
    - **Bedienungshilfen** erlauben (für die Fn-Taste und das Einfügen)
    - **Sprachmodell** laden (Turbo, 574 MB, einmalig) – liegt schon ein whisper.cpp-Modell in `~/.cache/whisper-cpp`, wird es automatisch verwendet
 4. In **Systemeinstellungen → Tastatur** „🌐-Taste drücken für" auf **„Keine Aktion"** stellen – sonst öffnet sich bei jedem Diktat die Emoji-Auswahl mit.
+5. **Update:** Die neue App in Programme ziehen und „Ersetzen" wählen. Liegt noch eine ältere Kopie woanders (Downloads, ~/Programme), bietet Redefluss beim Start an, sie in den Papierkorb zu legen – `make install` erledigt das automatisch.
 
 <p align="center">
   <img src="docs/images/onboarding.png" width="440" alt="Einführung">
@@ -65,7 +68,8 @@ Funktioniert in jeder App mit Textfeld: Mail, Slack, Notizen, Browser, Word, VS 
 - **Automatische Spracherkennung** oder feste Sprache (Deutsch, Englisch und 12 weitere)
 - **Eigenes Wörterbuch** für Namen und Fachbegriffe, dazu **Ersetzungen** („mfg" → „Mit freundlichen Grüßen")
 - **Füllwörter raus** (äh, ähm, uh …) – ohne „um" oder „er" im Deutschen zu zerstören
-- **Verlauf** aller Diktate, durchsuchbar, lokal gespeichert
+- **Meeting-Mitschrift**: erkennt automatisch, wenn eine andere App das Mikrofon nutzt, und transkribiert das Gespräch (eigene Stimme + Systemaudio der anderen Teilnehmer) in ~30-Sekunden-Abschnitten in den Verlauf – lokal, ohne Audiodatei. Abschaltbar; von Hand startbar über das Menüleisten-Symbol. macOS fragt beim ersten Mal nach der Erlaubnis für Systemaudio (macOS 14.2+).
+- **Verlauf** aller Diktate und Meeting-Mitschriften, durchsuchbar, lokal gespeichert
 - **Menüleisten-App**, auf Wunsch mit Autostart
 - Alternativ-Tasten: rechte ⌥, rechte ⌘ oder rechte ⌃ (Fn funktioniert nur auf Apple-Tastaturen)
 
@@ -88,7 +92,8 @@ Modelle kommen von [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co
 
 ## Datenschutz
 
-- Audio wird nur aufgenommen, solange die Taste gehalten wird bzw. der Dauer-Modus läuft.
+- Audio wird nur aufgenommen, solange die Taste gehalten wird, der Dauer-Modus läuft oder – wenn eingeschaltet – ein Meeting mitgeschrieben wird. Die Leiste zeigt die laufende Mitschrift mit rotem Punkt und Stopp-Knopf.
+- Meeting-Mitschriften speichern nur Text, nie Audio. Wer Gespräche mitschreibt, sollte die Teilnehmenden darüber informieren.
 - Die Transkription läuft vollständig lokal; es gibt keine Server, keine Telemetrie, kein Konto.
 - Die einzige Netzwerkverbindung ist der Modell-Download von Hugging Face – danach funktioniert Redefluss offline.
 
@@ -101,6 +106,10 @@ Modelle kommen von [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co
 **Im Terminal funktioniert es nicht.** Ist dort „Sichere Tastatureingabe" aktiv (Menü *Terminal*), blockiert macOS alle globalen Tastenkürzel. Das Menüleisten-Symbol zeigt das an.
 
 **Text landet nicht im Feld.** Ohne Bedienungshilfen-Freigabe legt Redefluss den Text nur in die Zwischenablage – dann mit ⌘V einfügen.
+
+**Im Meeting fehlen die anderen Teilnehmer.** Dann wurde die Freigabe für Systemaudio nicht erteilt: *Systemeinstellungen → Datenschutz & Sicherheit → Bildschirm- & Systemaudioaufnahme → Redefluss*. Die Einstellungen zeigen unter „Meetings" den Grund.
+
+**Die App ist abgestürzt.** Den Bericht findest du unter `~/Library/Logs/DiagnosticReports/Redefluss-….ips` – bitte an ein Issue anhängen. Laufende Diagnose: `log stream --predicate 'subsystem == "eu.dream-marketing.redefluss"'`.
 
 ## Selbst bauen
 
@@ -126,7 +135,7 @@ make dmg        # Universal-Build (Apple Silicon + Intel) + DMG/ZIP
 
 ### Signatur und Berechtigungen
 
-macOS merkt sich die Bedienungshilfen-Freigabe anhand der Code-Signatur. Ad-hoc-signierte Builds bekommen bei jedem Build eine neue Identität – dann muss man die Freigabe jedes Mal neu erteilen. Deshalb signieren die Releases mit einer festen, selbstsignierten Identität:
+macOS merkt sich die Bedienungshilfen-Freigabe anhand der Code-Signatur. Ad-hoc-signierte Builds bekommen bei jedem Build eine neue Identität – dann muss man die Freigabe jedes Mal neu erteilen. `build-app.sh` nimmt deshalb automatisch die Identität, mit der die App in `/Applications` schon signiert ist (z. B. ein „Apple Development"-Zertifikat aus Xcode), wenn sie im Schlüsselbund liegt. Die Releases signieren mit einer festen, selbstsignierten Identität:
 
 ```sh
 ./scripts/create-signing-identity.sh   # legt ~/.redefluss-signing/ an (nicht ins Repo!)
@@ -148,10 +157,12 @@ Der Workflow testet, baut die Universal-App, signiert, erzeugt DMG + ZIP und hä
 Sources/RedeflussKit/
   Hotkey/         CGEventTap: Fn halten, Doppeltipp, Esc, ⌃⌘V
   Audio/          AVAudioEngine → 16 kHz Mono, Pegel für die Wellenform, Signaltöne
+  Meeting/        Meeting-Erkennung (Audio-HAL), Systemaudio-Tap, Abschnitte, Mitschrift
   Transcription/  whisper.cpp-Bridge, Modellverwaltung, Nachbearbeitung
   Insertion/      Zwischenablage + ⌘V (layoutunabhängig), Wiederherstellung
   UI/             Schwebende Leiste, Einstellungen, Einführung
   App/            Ablaufsteuerung, Menüleiste
+Sources/RedeflussObjC/  Fängt Objective-C-Exceptions aus AVFoundation ab (sonst Absturz statt Meldung)
 ```
 
 ## Lizenz

@@ -29,6 +29,20 @@ public enum HotkeyOption: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// Vom Nutzer verschobene Lage der Leiste: Mittelpunkt als Anteil 0…1 der sichtbaren Bildschirmfläche,
+/// dazu der Bildschirm, auf dem sie abgelegt wurde (nil = der, auf dem sie gerade ist).
+public struct FlowBarPosition: Codable, Equatable {
+    public var x: Double
+    public var y: Double
+    public var displayID: UInt32?
+
+    public init(x: Double, y: Double, displayID: UInt32? = nil) {
+        self.x = x
+        self.y = y
+        self.displayID = displayID
+    }
+}
+
 public struct Replacement: Codable, Identifiable, Equatable {
     public var id = UUID()
     public var from: String
@@ -64,6 +78,16 @@ public final class AppSettings: ObservableObject {
     @Published public var dictionary: [String] { didSet { defaults.set(dictionary, forKey: "dictionary") } }
     @Published public var replacements: [Replacement] { didSet { saveCodable(replacements, forKey: "replacements") } }
     @Published public var onboardingDone: Bool { didSet { defaults.set(onboardingDone, forKey: "onboardingDone") } }
+    /// nil = unten mittig (Standard).
+    @Published public var flowBarPosition: FlowBarPosition? {
+        didSet {
+            if let flowBarPosition { saveCodable(flowBarPosition, forKey: "flowBarPosition") } else { defaults.removeObject(forKey: "flowBarPosition") }
+        }
+    }
+    /// Meetings automatisch mitschreiben, sobald eine andere App das Mikrofon nutzt.
+    @Published public var meetingAutoRecord: Bool { didSet { defaults.set(meetingAutoRecord, forKey: "meetingAutoRecord") } }
+    /// Dabei auch das Systemaudio (die anderen Teilnehmer) aufnehmen – braucht die Berechtigung „Systemaudioaufnahme".
+    @Published public var meetingSystemAudio: Bool { didSet { defaults.set(meetingSystemAudio, forKey: "meetingSystemAudio") } }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -86,6 +110,28 @@ public final class AppSettings: ObservableObject {
             replacements = []
         }
         onboardingDone = defaults.bool(forKey: "onboardingDone")
+        if let data = defaults.data(forKey: "flowBarPosition") {
+            flowBarPosition = try? JSONDecoder().decode(FlowBarPosition.self, from: data)
+        } else {
+            flowBarPosition = nil
+        }
+        meetingAutoRecord = defaults.object(forKey: "meetingAutoRecord") as? Bool ?? true
+        meetingSystemAudio = defaults.object(forKey: "meetingSystemAudio") as? Bool ?? true
+    }
+
+    /// Eigene Wörter als Kontext für Whisper; lange Listen werden gekürzt (Prompt ≈ 224 Tokens).
+    var whisperPrompt: String {
+        let words = dictionary
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !words.isEmpty else { return "" }
+        var prompt = ""
+        for word in words {
+            let next = prompt.isEmpty ? word : prompt + ", " + word
+            if next.count > 600 { break }
+            prompt = next
+        }
+        return prompt + "."
     }
 
     private func saveCodable<T: Encodable>(_ value: T, forKey key: String) {

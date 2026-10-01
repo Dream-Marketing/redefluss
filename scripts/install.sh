@@ -63,7 +63,23 @@ fi
 if [[ -n "$OLD_DR" && "$OLD_DR" != "$NEW_DR" && -z "${NO_TCC_RESET:-}" ]]; then
   tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
   tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
+  tccutil reset AudioCapture "$BUNDLE_ID" >/dev/null 2>&1 || true
 fi
+
+# --- Alte Kopien entfernen ---------------------------------------------------
+# Sonst zeigt Spotlight zwei „Redefluss": die installierte und die aus dist/, Downloads oder ~/Programme.
+rm -rf dist/Redefluss.app   # nach dem Kopieren nicht mehr nötig; make run/dmg bauen sie neu
+{
+  mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true
+  for p in "$HOME/Applications/Redefluss.app" "$HOME/Downloads/Redefluss.app" "$HOME/Desktop/Redefluss.app"; do
+    [[ -d "$p" ]] && echo "$p"
+  done
+} | sort -u | while IFS= read -r app; do
+  [[ -z "$app" || ! -d "$app" ]] && continue
+  [[ "$app" == "$TARGET" || "$app" == /Volumes/* || "$app" == "$ROOT/.build/"* ]] && continue
+  echo "▸ Alte Kopie in den Papierkorb: $app"
+  mv "$app" "$HOME/.Trash/Redefluss $(date +%Y-%m-%d_%H%M%S).app" 2>/dev/null || rm -rf "$app"
+done
 
 # --- Optional: Modell --------------------------------------------------------
 if (( WITH_MODEL )); then
@@ -92,5 +108,6 @@ Jetzt bitte selbst (das kann kein Skript übernehmen):
   1. Mikrofon erlauben          – die Einführung fragt danach
   2. Bedienungshilfen erlauben  – Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen → Redefluss einschalten
   3. Sprachmodell wählen/laden  – in der Einführung (entfällt mit --with-model)
+  4. Systemaudio erlauben       – fragt macOS beim ersten Meeting, das mitgeschrieben wird
 Dann: Fn halten → sprechen → loslassen.
 EOF

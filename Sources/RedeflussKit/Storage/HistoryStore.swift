@@ -2,16 +2,37 @@ import Foundation
 import Combine
 
 public struct HistoryItem: Codable, Identifiable, Equatable {
+    public enum Kind: String, Codable {
+        case dictation
+        case meeting
+    }
+
     public var id = UUID()
     public let date: Date
-    public let text: String
+    public var text: String
     /// Aufnahmedauer in Sekunden.
-    public let audioSeconds: Double
+    public var audioSeconds: Double
     public let appName: String?
-    public let language: String?
+    public var language: String?
+    /// nil = Diktat (Einträge älterer Versionen haben das Feld nicht).
+    public var kind: Kind?
+    /// Meeting wird noch aufgezeichnet bzw. abgeschlossen.
+    public var inProgress: Bool?
+
+    public init(date: Date, text: String, audioSeconds: Double, appName: String?, language: String?, kind: Kind? = nil, inProgress: Bool? = nil) {
+        self.date = date
+        self.text = text
+        self.audioSeconds = audioSeconds
+        self.appName = appName
+        self.language = language
+        self.kind = kind
+        self.inProgress = inProgress
+    }
+
+    public var isMeeting: Bool { kind == .meeting }
 }
 
-/// Lokaler Verlauf der Diktate als JSON in Application Support.
+/// Lokaler Verlauf der Diktate und Meeting-Mitschriften als JSON in Application Support.
 public final class HistoryStore: ObservableObject {
     public static let shared = HistoryStore()
 
@@ -27,10 +48,20 @@ public final class HistoryStore: ObservableObject {
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         fileURL = base.appendingPathComponent("history.json")
         if let data = try? Data(contentsOf: fileURL) {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            items = (try? decoder.decode([HistoryItem].self, from: data)) ?? []
+            items = Self.decode(data)
         }
+        // Ein Meeting, das beim letzten Beenden noch lief, ist jetzt vorbei.
+        items = items.map { item in
+            var item = item
+            if item.inProgress == true { item.inProgress = false }
+            return item
+        }
+    }
+
+    static func decode(_ data: Data) -> [HistoryItem] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([HistoryItem].self, from: data)) ?? []
     }
 
     public var totalWords: Int {
@@ -40,6 +71,13 @@ public final class HistoryStore: ObservableObject {
     public func add(_ item: HistoryItem) {
         items.insert(item, at: 0)
         if items.count > limit { items.removeLast(items.count - limit) }
+        save()
+    }
+
+    /// Ersetzt den Eintrag mit derselben ID (z. B. wachsende Meeting-Mitschrift).
+    public func update(_ item: HistoryItem) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[index] = item
         save()
     }
 

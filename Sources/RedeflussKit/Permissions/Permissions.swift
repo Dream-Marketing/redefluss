@@ -33,6 +33,11 @@ public enum Permissions {
         open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
     }
 
+    /// „Bildschirm- & Systemaudioaufnahme" – dort steht die Freigabe für die Meeting-Mitschrift (Systemaudio).
+    public static func openAudioCaptureSettings() {
+        open("x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")
+    }
+
     public static func openKeyboardSettings() {
         open("x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
     }

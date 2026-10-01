@@ -4,7 +4,9 @@
 # Signatur, in dieser Reihenfolge:
 #   1. SIGN_IDENTITY (+ optional SIGN_KEYCHAIN) aus der Umgebung
 #   2. selbstsignierte Identität aus scripts/create-signing-identity.sh
-#   3. ad-hoc (codesign -s -)
+#   3. die Identität, mit der /Applications/Redefluss.app signiert ist (z. B. „Apple Development"),
+#      falls sie im Schlüsselbund liegt – so bleiben Bedienungshilfen & Mikrofon nach dem Update erhalten
+#   4. ad-hoc (codesign -s -)
 #
 # VERSION=1.2.3 setzt die Versionsnummer, sonst wird sie aus dem letzten Git-Tag gelesen.
 set -euo pipefail
@@ -72,6 +74,16 @@ if [[ -z "$IDENTITY" && -f "$LOCAL_KEYCHAIN" ]]; then
   if security find-identity -v -p codesigning "$LOCAL_KEYCHAIN" | grep -q "Redefluss Open Source"; then
     IDENTITY="Redefluss Open Source"
     KEYCHAIN="$LOCAL_KEYCHAIN"
+  fi
+fi
+# Eine installierte App mit anderer Signatur würde alle Berechtigungen verlieren (der Eintrag in den
+# Systemeinstellungen sieht dann „eingeschaltet" aus, greift aber nicht). Also dieselbe Identität nehmen.
+INSTALLED_APP="${INSTALLED_APP:-/Applications/$APP_NAME.app}"
+if [[ -z "$IDENTITY" && -d "$INSTALLED_APP" ]]; then
+  INSTALLED_CN="$(codesign -dvv "$INSTALLED_APP" 2>&1 | sed -n 's/^Authority=//p' | head -1)"
+  if [[ -n "$INSTALLED_CN" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -Fq "\"$INSTALLED_CN\""; then
+    IDENTITY="$INSTALLED_CN"
+    echo "  (Identität der installierten App weiterverwendet: $IDENTITY)"
   fi
 fi
 if [[ -n "$KEYCHAIN" ]]; then SIGN_ARGS+=(--keychain "$KEYCHAIN"); fi

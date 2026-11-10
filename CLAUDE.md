@@ -40,3 +40,11 @@ Nicht versuchen, TCC-Berechtigungen per Skript oder `sqlite3` zu setzen – das 
 - Meeting-Mitschrift (`Sources/RedeflussKit/Meeting/`): Erkennung über die Prozess-Objekte der Audio-HAL (wer nutzt das Mikrofon), Aufnahme über Prozess-Tap + Aggregatgerät (macOS 14.2+), Transkription in ~30-s-Abschnitten in den Verlauf. Es wird nie Audio gespeichert. Logs: `log stream --predicate 'subsystem == "eu.dream-marketing.redefluss"'`.
 - Objective-C-Exceptions aus AVFoundation (fehlendes/wechselndes Mikrofon) werden über `RDFCatchException` (Target `RedeflussObjC`) gefangen – neue AVAudioEngine-Aufrufe dort hinein, sonst stürzt die App statt eine Meldung zu zeigen.
 - Release: `git tag vX.Y.Z && git push origin vX.Y.Z` → GitHub Actions baut, signiert (Secrets `SIGNING_P12_*`) und veröffentlicht DMG + ZIP.
+
+## Windows-Version (`windows/`)
+
+C#/.NET 10 + WPF, eigenständiger Nachbau (kein gemeinsamer Code mit Swift). Details: `windows/README.md`.
+- `make windows-test` (läuft auf dem Mac) · `make windows-build` (kompiliert auf dem Mac, starten nur unter Windows) · `make windows-package` (ZIP in `windows/dist`)
+- Plattformneutrale Logik gehört nach `windows/src/Redefluss.Core` (testbar ohne Windows), Win32/WPF nach `Redefluss.App`.
+- Diktiertaste dort: F5 voreingestellt (Fn erreicht Windows nie); Verhalten durch `HotkeyEngineTests` festgelegt – bei Änderungen an `HotkeyMonitor` die Windows-Tests mitziehen. Strg+Alt+V (linke Alt, nicht AltGr) statt ⌃⌘V.
+- Meeting-Mitschrift dort: Erkennung über den ConsentStore in der Registry (`MicrophoneMonitor`, Logik in `Core/Meeting/MicrophoneUsage`), Aufnahme Mikrofon + WASAPI-Loopback (`MeetingCapture`, Mikrofon gibt den Takt vor – Loopback liefert bei Stille nichts). NAudio-Capture-Objekte immer ohne SynchronizationContext erzeugen, sonst landet RecordingStopped auf dem UI-Thread.

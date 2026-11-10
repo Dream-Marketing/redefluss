@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Plattformneutral: läuft (und testet) auch auf macOS/Linux. Nichts aus WPF/Win32 hier hinein. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Redefluss.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Redefluss.Core.Tests" />
+  </ItemGroup>
+</Project>

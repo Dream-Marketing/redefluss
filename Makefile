@@ -1,4 +1,4 @@
-.PHONY: app run install test dmg snapshots clean
+.PHONY: app run install test dmg snapshots clean windows-test windows-build windows-package
 
 # Schneller lokaler Build nur für diesen Mac.
 app:
@@ -33,3 +33,13 @@ snapshots: app
 
 clean:
 	rm -rf .build dist snapshots
+
+# Windows-Version (windows/): Tests und Kompilieren gehen auch auf dem Mac.
+windows-test:
+	dotnet test windows/tests/Redefluss.Core.Tests
+
+windows-build:
+	dotnet build windows/src/Redefluss.App
+
+windows-package:
+	pwsh windows/scripts/publish.ps1

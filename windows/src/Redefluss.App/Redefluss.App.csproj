@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Erlaubt das Bauen (nicht Starten) auch auf macOS/Linux, z. B. für eine schnelle Kompilierprüfung. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
+    <!-- Nur für NotifyIcon (Symbol im Infobereich) und Screen. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Redefluss</AssemblyName>
+    <RootNamespace>Redefluss.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- DPI kommt aus app.manifest (WPF); die WinForms-Warnung betrifft nur WinForms-Fenster, die es hier nicht gibt. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+    <ApplicationIcon>Assets\Redefluss.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <SatelliteResourceLanguages>de</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF und WinForms nebeneinander: keine globalen WinForms-Usings, sonst sind Application/MessageBox mehrdeutig. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <!-- CPU-Fallback und Vulkan (NVIDIA, AMD, Intel). Whisper.net wählt zur Laufzeit das erste, das lädt. -->
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.1" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+    <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Redefluss.Core\Redefluss.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\Redefluss.ico" />
+  </ItemGroup>
+</Project>

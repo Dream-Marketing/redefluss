@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>Diktieren in jeder Mac-App – Fn halten, sprechen, loslassen.</b><br>
-  Lokal mit whisper.cpp. Kein Konto, keine Cloud, kein Abo.
+  Lokal mit whisper.cpp. Kein Konto, keine Cloud, kein Abo.<br>
+  Auch für Windows: <a href="windows/README.md">Redefluss für Windows</a> (F5 halten statt Fn).
 </p>
 
 <p align="center">

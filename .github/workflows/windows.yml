@@ -1,0 +1,59 @@
+name: Windows
+
+# Baut und testet die Windows-Version (windows/). Bei einem Tag v* kommen ZIP und Setup.exe
+# zum selben GitHub-Release wie DMG und ZIP der Mac-Version (das legt release.yml an).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Tests
+        run: dotnet test windows/tests/Redefluss.Core.Tests --nologo
+
+      - name: Inno Setup bereitstellen
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+
+      - name: Bauen + Paketieren
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '0.0.0-probe' }
+          ./windows/scripts/publish.ps1 -Version $version
+
+      - name: Probelauf-Artefakte
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: redefluss-windows
+          path: windows/dist/*
+          retention-days: 7
+
+      - name: Zum Release hinzufügen
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Das Release legt der Mac-Job an – kurz darauf warten.
+          for ($i = 0; $i -lt 40; $i++) {
+            gh release view $env:GITHUB_REF_NAME *> $null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 30
+          }
+          gh release upload $env:GITHUB_REF_NAME (Get-ChildItem windows/dist/* | ForEach-Object FullName) --clobber

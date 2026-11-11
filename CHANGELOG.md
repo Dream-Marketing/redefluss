@@ -1,5 +1,9 @@
 # Änderungen
 
+## 0.3.0
+
+- **Windows-Version:** Redefluss läuft jetzt auch unter Windows 10 und 11 (x64), mit Installer ohne Adminrechte. F5 halten → sprechen → loslassen (die Taste ist frei wählbar), Dauer-Modus, Verlauf, Wörterbuch und Meeting-Mitschrift mit Mikrofon und Systemaudio, wie auf dem Mac.
+
 ## 0.2.0 – 2026-10-01
 
 - **Meeting-Mitschrift:** Sobald eine andere App (Zoom, Teams, FaceTime, Browser) das Mikrofon nutzt, schreibt Redefluss das Gespräch mit – eigene Stimme plus Systemaudio der anderen Teilnehmer – und legt den Text im Verlauf ab. Reagiert innerhalb von etwa einer Sekunde, endet zwei Sekunden nach dem Auflegen. Abschaltbar in den Einstellungen, von Hand startbar über die Menüleiste. macOS fragt beim ersten Mal nach der Erlaubnis für Systemaudio (macOS 14.2+).

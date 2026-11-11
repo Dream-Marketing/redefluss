@@ -81,7 +81,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cat > "$RUNNER_TEMP/notes.md" <<'EOF'
-          ## Installation
+          ## Installation auf dem Mac (macOS 14+)
 
           1. **Redefluss-VERSION.dmg** herunterladen, öffnen und Redefluss in **Programme** ziehen.
           2. Beim ersten Öffnen blockiert macOS die App (sie ist nicht bei Apple notarisiert):
@@ -92,6 +92,16 @@ jobs:
 
           Dann: **Fn halten → sprechen → loslassen.** Doppeltipp auf Fn = Dauer-Modus.
           Beim ersten Meeting fragt macOS nach der Erlaubnis für Systemaudio – bestätigen, sonst wird nur das eigene Mikrofon mitgeschrieben.
+
+          ## Installation unter Windows (10 und 11, x64)
+
+          1. **Redefluss-VERSION-windows-x64-setup.exe** herunterladen und starten. Adminrechte braucht es nicht.
+          2. Die App ist nicht signiert, deshalb warnt SmartScreen: **Weitere Informationen → Trotzdem ausführen**.
+          3. Der Einführung folgen: Mikrofonzugriff für Desktop-Apps prüfen, Sprachmodell laden (~574 MB, einmalig), Diktiertaste wählen.
+          4. **Ohne Installation:** `Redefluss-VERSION-windows-x64.zip` entpacken und `Redefluss.exe` starten.
+
+          Dann: **F5 halten → sprechen → loslassen.** Doppeltipp auf F5 = Dauer-Modus. Die Fn-Taste sieht Windows nicht, die Diktiertaste ist deshalb frei wählbar.
+          Meetings schreibt Redefluss automatisch mit, ohne Rückfrage von Windows.
 
           Kein Konto, keine Cloud – alles läuft lokal mit whisper.cpp.
           EOF

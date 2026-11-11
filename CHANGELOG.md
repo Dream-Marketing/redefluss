@@ -1,6 +1,6 @@
 # Änderungen
 
-## 0.3.0
+## 0.3.0 – 2026-11-11
 
 - **Windows-Version:** Redefluss läuft jetzt auch unter Windows 10 und 11 (x64), mit Installer ohne Adminrechte. F5 halten → sprechen → loslassen (die Taste ist frei wählbar), Dauer-Modus, Verlauf, Wörterbuch und Meeting-Mitschrift mit Mikrofon und Systemaudio, wie auf dem Mac.
 

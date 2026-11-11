@@ -37,6 +37,21 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { '0.0.0-probe' }
           ./windows/scripts/publish.ps1 -Version $version
 
+      # Fängt Fehler ab, die erst beim Start auffallen (Tests und Build sehen sie nicht).
+      - name: Starttest
+        run: |
+          $log = "$env:LOCALAPPDATA\Redefluss\logs\redefluss.log"
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $p = Start-Process windows/publish/win-x64/Redefluss.exe -PassThru
+          Start-Sleep -Seconds 20
+          $alive = -not $p.HasExited
+          if (Test-Path $log) { Get-Content $log } else { Write-Host "Kein Protokoll geschrieben." }
+          if ($alive) { Stop-Process -Id $p.Id -Force } else { Write-Host "Beendet mit Code $($p.ExitCode)" }
+          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 2; StartTime = (Get-Date).AddMinutes(-2) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'Redefluss' } | ForEach-Object { $_.Message }
+          if (-not $alive) { throw "Redefluss hat sich beim Start beendet" }
+          if (-not (Test-Path $log) -or (Select-String -Path $log -Pattern ' FEHLER ' -Quiet)) { throw "Startfehler im Protokoll" }
+
       - name: Probelauf-Artefakte
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4

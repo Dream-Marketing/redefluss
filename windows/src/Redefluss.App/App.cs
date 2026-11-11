@@ -19,11 +19,30 @@ public sealed class App : Application
     private OnboardingWindow? _onboarding;
     private IDisposable? _whisperLog;
 
-    public static ImageSource IconImage { get; } =
-        BitmapFrame.Create(new Uri("pack://application:,,,/Assets/Redefluss.ico"));
+    // Erst beim ersten Zugriff laden: pack://-Adressen funktionieren erst, wenn ein Application-Objekt existiert.
+    // Als statisches Feld lief das vor Main und beendete die App ohne jede Meldung.
+    private static ImageSource? _iconImage;
+    public static ImageSource IconImage =>
+        _iconImage ??= BitmapFrame.Create(new Uri("pack://application:,,,/Assets/Redefluss.ico"));
 
     [STAThread]
     public static int Main(string[] args)
+    {
+        try
+        {
+            return Run(args);
+        }
+        catch (Exception e)
+        {
+            // Startfehler nie stumm: ins Protokoll und als Meldung.
+            Log.Error("Start fehlgeschlagen", e);
+            MessageBox.Show($"Redefluss konnte nicht starten:\n\n{e.Message}\n\nDetails: {Log.Directory}",
+                "Redefluss", MessageBoxButton.OK, MessageBoxImage.Error);
+            return 1;
+        }
+    }
+
+    private static int Run(string[] args)
     {
         // Nur eine Redefluss-Instanz – zwei Tastatur-Hooks würden sich gegenseitig die Taste wegnehmen.
         _singleInstance = new Mutex(initiallyOwned: true, @"Local\Redefluss.SingleInstance", out var isFirst);
@@ -49,6 +68,21 @@ public sealed class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        try
+        {
+            StartUp(e);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Start fehlgeschlagen", ex);
+            MessageBox.Show($"Redefluss konnte nicht starten:\n\n{ex.Message}\n\nDetails: {Log.Directory}",
+                "Redefluss", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+        }
+    }
+
+    private void StartUp(StartupEventArgs e)
+    {
         Log.Info($"Start {typeof(App).Assembly.GetName().Version} · {Environment.OSVersion}");
         KeyNames.SystemName = Native.NativeMethods.SystemKeyName;
         _whisperLog = WhisperTranscriber.RouteLogs(m => Log.Info($"whisper: {m}"));

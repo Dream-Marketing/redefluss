@@ -400,7 +400,8 @@ public final class DictationController: ObservableObject {
             if item == nil {
                 self.flowBar.showMessage("Meeting ohne Sprache – nichts gespeichert", duration: 3)
             } else {
-                self.flowBar.showMessage("Meeting-Mitschrift im Verlauf gespeichert", duration: 4) { [weak self] in
+                let saved = item.flatMap(self.history.audioURL(for:)) != nil
+                self.flowBar.showMessage(saved ? "Mitschrift und Aufnahme im Verlauf gespeichert" : "Meeting-Mitschrift im Verlauf gespeichert", duration: 4) { [weak self] in
                     self?.onNeedsAttention?(.history)
                 }
             }

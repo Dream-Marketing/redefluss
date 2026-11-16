@@ -18,8 +18,10 @@ public struct HistoryItem: Codable, Identifiable, Equatable {
     public var kind: Kind?
     /// Meeting wird noch aufgezeichnet bzw. abgeschlossen.
     public var inProgress: Bool?
+    /// Dateiname der Audioaufnahme im Aufnahmen-Ordner – nur bei Meetings, wenn das Speichern eingeschaltet war.
+    public var audioFile: String?
 
-    public init(date: Date, text: String, audioSeconds: Double, appName: String?, language: String?, kind: Kind? = nil, inProgress: Bool? = nil) {
+    public init(date: Date, text: String, audioSeconds: Double, appName: String?, language: String?, kind: Kind? = nil, inProgress: Bool? = nil, audioFile: String? = nil) {
         self.date = date
         self.text = text
         self.audioSeconds = audioSeconds
@@ -27,6 +29,7 @@ public struct HistoryItem: Codable, Identifiable, Equatable {
         self.language = language
         self.kind = kind
         self.inProgress = inProgress
+        self.audioFile = audioFile
     }
 
     public var isMeeting: Bool { kind == .meeting }
@@ -38,6 +41,9 @@ public final class HistoryStore: ObservableObject {
 
     @Published public private(set) var items: [HistoryItem] = []
 
+    /// Hier liegen die Audioaufnahmen der Meetings (nur wenn eingeschaltet); sie gehören zu ihrem Verlaufseintrag.
+    public let recordingsDirectory: URL
+
     private let fileURL: URL
     private let limit = 500
 
@@ -47,6 +53,7 @@ public final class HistoryStore: ObservableObject {
             .appendingPathComponent("Redefluss", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         fileURL = base.appendingPathComponent("history.json")
+        recordingsDirectory = base.appendingPathComponent("Aufnahmen", isDirectory: true)
         if let data = try? Data(contentsOf: fileURL) {
             items = Self.decode(data)
         }
@@ -70,7 +77,10 @@ public final class HistoryStore: ObservableObject {
 
     public func add(_ item: HistoryItem) {
         items.insert(item, at: 0)
-        if items.count > limit { items.removeLast(items.count - limit) }
+        if items.count > limit {
+            items.suffix(items.count - limit).forEach(removeAudio)
+            items.removeLast(items.count - limit)
+        }
         save()
     }
 
@@ -81,14 +91,39 @@ public final class HistoryStore: ObservableObject {
         save()
     }
 
+    /// Löscht den Eintrag und – falls vorhanden – seine Audioaufnahme.
     public func delete(_ item: HistoryItem) {
+        removeAudio(of: item)
         items.removeAll { $0.id == item.id }
         save()
     }
 
     public func clear() {
+        items.forEach(removeAudio)
         items.removeAll()
         save()
+    }
+
+    /// Audioaufnahme zu einem Eintrag – nil, wenn es keine gibt (oder sie von Hand gelöscht wurde).
+    public func audioURL(for item: HistoryItem) -> URL? {
+        guard let url = audioLocation(of: item), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
+    /// Wie viele Einträge haben (noch) eine Audioaufnahme?
+    public var recordingCount: Int { items.filter { audioURL(for: $0) != nil }.count }
+
+    private func audioLocation(of item: HistoryItem) -> URL? {
+        // Nur der letzte Pfadbestandteil zählt – ein Eintrag darf nie aus dem Ordner herauszeigen.
+        guard let name = item.audioFile.map({ ($0 as NSString).lastPathComponent }), !name.isEmpty, name != ".." else { return nil }
+        return recordingsDirectory.appendingPathComponent(name)
+    }
+
+    private func removeAudio(of item: HistoryItem) {
+        guard let url = audioLocation(of: item) else { return }
+        try? FileManager.default.removeItem(at: url)
+        // Auch die Rohdatei einer laufenden oder abgebrochenen Aufnahme (siehe MeetingAudioWriter).
+        try? FileManager.default.removeItem(at: url.appendingPathExtension("pcm"))
     }
 
     private func save() {

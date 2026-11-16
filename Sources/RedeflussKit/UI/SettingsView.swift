@@ -139,6 +139,23 @@ private struct GeneralPane: View {
                     .disabled(!MeetingDetector.isSupported)
                 Toggle("Andere Teilnehmer mitschreiben (Systemaudio)", isOn: $settings.meetingSystemAudio)
                     .disabled(!MeetingDetector.isSupported || !settings.meetingAutoRecord)
+                Toggle("Gespräch zusätzlich als Audiodatei speichern", isOn: $settings.meetingSaveAudio)
+                if settings.meetingSaveAudio || controller.history.recordingCount > 0 {
+                    LabeledContent("Aufnahmen") {
+                        HStack {
+                            Text(controller.history.recordingCount == 1 ? "1 Datei" : "\(controller.history.recordingCount) Dateien")
+                                .foregroundStyle(.secondary)
+                            Button("Ordner öffnen") {
+                                try? FileManager.default.createDirectory(at: controller.history.recordingsDirectory, withIntermediateDirectories: true)
+                                NSWorkspace.shared.open(controller.history.recordingsDirectory)
+                            }
+                        }
+                    }
+                }
+                if let problem = controller.meeting.audioFileProblem {
+                    Label("Die Audiodatei ließ sich zuletzt nicht speichern: \(problem)", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout).foregroundStyle(.orange)
+                }
                 if !MeetingDetector.isSupported {
                     Text("Braucht macOS 14.2 oder neuer.").font(.callout).foregroundStyle(.secondary)
                 } else {
@@ -158,7 +175,7 @@ private struct GeneralPane: View {
             } header: {
                 Text("Meetings")
             } footer: {
-                Footnote("Sobald eine andere App (Zoom, Teams, FaceTime, der Browser …) das Mikrofon nutzt, schreibt Redefluss das Gespräch mit und legt den Text im Verlauf ab – nichts wird eingefügt, kein Audio gespeichert. Beim ersten Mal fragt macOS nach der Erlaubnis für Systemaudio. Teilnehmende vorher informieren.")
+                Footnote("Sobald eine andere App (Zoom, Teams, FaceTime, der Browser …) das Mikrofon nutzt, schreibt Redefluss das Gespräch mit und legt den Text im Verlauf ab – nichts wird eingefügt. Audio wird nur gespeichert, wenn du es oben einschaltest: dann liegt zu jeder Mitschrift eine .m4a-Datei (etwa 15 MB pro Stunde) auf diesem Mac, die mit dem Verlaufseintrag gelöscht wird. Beim ersten Mal fragt macOS nach der Erlaubnis für Systemaudio. Gespräche nur mit Einverständnis aller Teilnehmenden aufnehmen – heimliches Aufzeichnen ist in Deutschland strafbar (§ 201 StGB).")
             }
 
             Section("Darstellung & System") {
@@ -194,7 +211,7 @@ private struct GeneralPane: View {
     private var meetingStatus: some View {
         switch controller.meeting.state {
         case .recording(let appName, _):
-            Label("Mitschrift läuft: \(appName)", systemImage: "record.circle").foregroundStyle(.red)
+            Label(controller.meeting.isSavingAudio ? "Mitschrift und Audioaufnahme laufen: \(appName)" : "Mitschrift läuft: \(appName)", systemImage: "record.circle").foregroundStyle(.red)
         case .finishing:
             Label("Mitschrift wird gespeichert …", systemImage: "ellipsis.circle").foregroundStyle(.secondary)
         case .idle:
@@ -502,6 +519,10 @@ private struct HistoryPane: View {
                                 if let app = item.appName { Text("· \(app)") }
                                 if let language = item.language { Text("· \(language.uppercased())") }
                                 Spacer()
+                                if item.inProgress != true, let audio = history.audioURL(for: item) {
+                                    Button("Aufnahme zeigen") { NSWorkspace.shared.activateFileViewerSelecting([audio]) }
+                                        .buttonStyle(.link)
+                                }
                                 Button(copiedID == item.id ? "Kopiert" : "Kopieren") {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(item.text, forType: .string)

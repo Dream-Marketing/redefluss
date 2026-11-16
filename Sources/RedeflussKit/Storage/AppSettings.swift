@@ -155,6 +155,8 @@ public final class AppSettings: ObservableObject {
     @Published public var meetingAutoRecord: Bool { didSet { defaults.set(meetingAutoRecord, forKey: "meetingAutoRecord") } }
     /// Dabei auch das Systemaudio (die anderen Teilnehmer) aufnehmen – braucht die Berechtigung „Systemaudioaufnahme".
     @Published public var meetingSystemAudio: Bool { didSet { defaults.set(meetingSystemAudio, forKey: "meetingSystemAudio") } }
+    /// Das Gespräch zusätzlich als Audiodatei ablegen (Standard: aus – sonst wird nur Text gespeichert).
+    @Published public var meetingSaveAudio: Bool { didSet { defaults.set(meetingSaveAudio, forKey: "meetingSaveAudio") } }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -189,6 +191,7 @@ public final class AppSettings: ObservableObject {
         }
         meetingAutoRecord = defaults.object(forKey: "meetingAutoRecord") as? Bool ?? true
         meetingSystemAudio = defaults.object(forKey: "meetingSystemAudio") as? Bool ?? true
+        meetingSaveAudio = defaults.bool(forKey: "meetingSaveAudio")
     }
 
     /// Eigene Wörter als Kontext für Whisper; lange Listen werden gekürzt (Prompt ≈ 224 Tokens).

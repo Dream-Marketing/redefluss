@@ -94,7 +94,7 @@ Modelle kommen von [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co
 ## Datenschutz
 
 - Audio wird nur aufgenommen, solange die Taste gehalten wird, der Dauer-Modus läuft oder – wenn eingeschaltet – ein Meeting mitgeschrieben wird. Die Leiste zeigt die laufende Mitschrift mit rotem Punkt und Stopp-Knopf.
-- Meeting-Mitschriften speichern nur Text, nie Audio. Wer Gespräche mitschreibt, sollte die Teilnehmenden darüber informieren.
+- Meeting-Mitschriften speichern nur Text. Audio wird nur gespeichert, wenn „Gespräch zusätzlich als Audiodatei speichern" eingeschaltet ist (Standard: aus) – dann liegt je Meeting eine .m4a-Datei in `~/Library/Application Support/Redefluss/Aufnahmen` und wird mit dem Verlaufseintrag gelöscht. Die Aufnahme übersteht auch einen Absturz oder Stromausfall: sie wird beim nächsten Start fertiggestellt. Wer Gespräche mitschreibt oder aufnimmt, braucht das Einverständnis der Teilnehmenden (§ 201 StGB).
 - Die Transkription läuft vollständig lokal; es gibt keine Server, keine Telemetrie, kein Konto.
 - Die einzige Netzwerkverbindung ist der Modell-Download von Hugging Face – danach funktioniert Redefluss offline.
 

@@ -71,6 +71,7 @@ public final class DictationController: ObservableObject {
 
     public func start() {
         hotkey.onEvent = { [weak self] event in self?.handle(event) }
+        recorder.usesVoiceProcessing = true
         recorder.onLevel = { [weak self] level in self?.flowBar.model.push(level: level) }
         recorder.onInterruption = { [weak self] in self?.recordingInterrupted() }
 

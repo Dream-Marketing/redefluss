@@ -89,6 +89,12 @@ public final class DictationController: ObservableObject {
         settings.$handsFreeEnabled
             .sink { [weak self] enabled in self?.hotkey.handsFreeEnabled = enabled }
             .store(in: &cancellables)
+        // Während in den Einstellungen eine neue Diktiertaste aufgenommen wird, darf die alte nichts auslösen.
+        NotificationCenter.default.publisher(for: .hotkeyRecordingChanged)
+            .sink { [weak self] note in
+                self?.hotkey.isSuspended = note.userInfo?[HotkeyRecorder.recordingKey] as? Bool ?? false
+            }
+            .store(in: &cancellables)
         settings.$showIdlePill
             .sink { [weak self] show in self?.flowBar.showIdle = show }
             .store(in: &cancellables)

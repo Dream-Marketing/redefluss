@@ -132,6 +132,146 @@ final class HotkeyMonitorTests: XCTestCase {
         XCTAssertEqual(events.count, 2)
     }
 
+    // MARK: - Eigene Taste: normale Taste statt Modifier (z. B. F18 auf einer Fremdtastatur)
+
+    private let f18 = HotkeyOption(kind: .key, keyCode: 79, name: "F18")
+
+    func testCustomKeyHoldAndReleaseIsSwallowedIncludingAutorepeat() {
+        monitor.hotkey = f18
+        XCTAssertTrue(key(79, down: true), "Die Diktiertaste selbst darf nie in der App landen")
+        XCTAssertTrue(key(79, down: true, autorepeat: true), "Autorepeat beim Halten wird geschluckt")
+        XCTAssertTrue(key(79, down: true, autorepeat: true))
+        advance(1)
+        XCTAssertTrue(key(79, down: false))
+        XCTAssertEqual(events, [.start, .stop], "Autorepeat darf kein zweites Diktat starten")
+    }
+
+    func testCustomKeyShortTapAndDoubleTap() {
+        monitor.hotkey = f18
+        key(79, down: true); advance(0.08); key(79, down: false)
+        XCTAssertEqual(events, [.start, .cancel])
+        advance(0.15)
+        key(79, down: true); advance(0.08); key(79, down: false)
+        XCTAssertEqual(events, [.start, .cancel, .start, .lockHandsFree])
+
+        advance(5)
+        XCTAssertTrue(key(79, down: true))                     // einmal drücken → fertig
+        XCTAssertEqual(events.last, .stop)
+        XCTAssertTrue(key(79, down: true, autorepeat: true))
+        XCTAssertTrue(key(79, down: false))
+        XCTAssertEqual(events.count, 5)
+    }
+
+    func testCustomKeyWithSpaceLocksHandsFreeAndEscapeCancels() {
+        monitor.hotkey = f18
+        key(79, down: true)
+        XCTAssertTrue(key(49, down: true))
+        XCTAssertTrue(key(49, down: false))
+        key(79, down: false)
+        XCTAssertEqual(events, [.start, .lockHandsFree])
+        XCTAssertTrue(key(53, down: true))
+        XCTAssertEqual(events.last, .cancel)
+    }
+
+    func testCustomKeyPlusOtherKeyIsPassedThroughAndCancels() {
+        monitor.hotkey = f18
+        key(79, down: true)
+        XCTAssertFalse(key(0, down: true), "F18+A muss als A bei der App ankommen")
+        XCTAssertEqual(events, [.start, .cancel])
+        XCTAssertTrue(key(79, down: false), "Loslassen der Diktiertaste bleibt geschluckt")
+        XCTAssertEqual(events.count, 2)
+    }
+
+    func testCustomKeyIgnoresFnAndFnIgnoresCustomKey() {
+        monitor.hotkey = f18
+        fn(down: true); advance(1); fn(down: false)
+        XCTAssertTrue(events.isEmpty)
+
+        monitor.hotkey = .fn
+        XCTAssertFalse(key(79, down: true))
+        XCTAssertFalse(key(79, down: false))
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testF5PresetTakesMicrophoneKeyAndPlainF5ButNotF13() {
+        monitor.hotkey = .f5
+        // Apple-Tastatur ohne Fn: Mikrofontaste, Keycode 176, haltbar mit Autorepeat.
+        XCTAssertTrue(key(176, down: true), "Geschluckt – sonst startet macOS-Diktat bzw. beim Halten Siri")
+        XCTAssertTrue(key(176, down: true, autorepeat: true))
+        advance(1)
+        XCTAssertTrue(key(176, down: false))
+        XCTAssertEqual(events, [.start, .stop])
+
+        // Fn+F5 oder Fremdtastatur: normales F5.
+        events = []
+        XCTAssertTrue(key(96, down: true))
+        advance(1)
+        XCTAssertTrue(key(96, down: false))
+        XCTAssertEqual(events, [.start, .stop])
+
+        // F13 bleibt eine fremde Taste.
+        events = []
+        XCTAssertFalse(key(105, down: true))
+        XCTAssertFalse(key(105, down: false))
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testInstantMicrophoneTapsFromLogiOptionsToggleHandsFree() {
+        monitor.hotkey = .f5
+        // Logi Options+ schickt für „Diktat“ nur ein sofortiges keyDown/keyUp – Halten ist damit
+        // unmöglich, also schaltet ein Tipp den Dauer-Modus ein …
+        XCTAssertTrue(key(176, down: true)); XCTAssertTrue(key(176, down: false))
+        XCTAssertEqual(events, [.start, .lockHandsFree])
+        advance(5)
+        // … und der nächste Tipp wieder aus.
+        key(176, down: true); key(176, down: false)
+        XCTAssertEqual(events, [.start, .lockHandsFree, .stop])
+        // Danach ist normales Halten (Fn+F5 bzw. Tastenkombination F5 aus Options+) wieder möglich.
+        advance(1)
+        key(96, down: true); advance(1); key(96, down: false)
+        XCTAssertEqual(Array(events.suffix(2)), [.start, .stop])
+    }
+
+    func testInstantTapWithoutHandsFreeIsDiscarded() {
+        monitor.hotkey = .f5
+        monitor.handsFreeEnabled = false
+        key(176, down: true); key(176, down: false)
+        XCTAssertEqual(events, [.start, .cancel])
+    }
+
+    func testHumanShortTapOnTheMicrophoneKeyStillCancels() {
+        monitor.hotkey = .f5
+        // Ein echter Tipp auf der Mac-Tastatur dauert immer deutlich länger als ein Software-Tipp.
+        key(176, down: true); advance(0.04); key(176, down: false)
+        XCTAssertEqual(events, [.start, .cancel])
+        advance(0.15)
+        key(176, down: true); advance(0.04); key(176, down: false)
+        XCTAssertEqual(events, [.start, .cancel, .start, .lockHandsFree], "Doppeltipp bleibt der Weg in den Dauer-Modus")
+    }
+
+    func testAnyModifierCanBeTheHotkey() {
+        monitor.hotkey = HotkeyOption(kind: .modifier, keyCode: 56, name: "Linke ⇧")
+        send(flagsChanged: 56, flags: CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x02))
+        advance(1)
+        send(flagsChanged: 56, flags: [])
+        XCTAssertEqual(events, [.start, .stop])
+        // Rechte Shift (Keycode 60) löst nichts aus.
+        send(flagsChanged: 60, flags: CGEventFlags(rawValue: CGEventFlags.maskShift.rawValue | 0x04))
+        XCTAssertEqual(events.count, 2)
+    }
+
+    func testSuspendedMonitorPassesEverythingThrough() {
+        monitor.isSuspended = true
+        fn(down: true); advance(1); fn(down: false)
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertFalse(key(9, down: true, flags: [.maskCommand, .maskControl]), "Auch ⌃⌘V bleibt unberührt")
+        XCTAssertFalse(key(53, down: true))
+
+        monitor.isSuspended = false
+        fn(down: true); advance(1); fn(down: false)
+        XCTAssertEqual(events, [.start, .stop])
+    }
+
     // MARK: - Helfer
 
     private func doubleTap() {
@@ -154,9 +294,10 @@ final class HotkeyMonitorTests: XCTestCase {
     }
 
     @discardableResult
-    private func key(_ keyCode: CGKeyCode, down: Bool, flags: CGEventFlags = []) -> Bool {
+    private func key(_ keyCode: CGKeyCode, down: Bool, flags: CGEventFlags = [], autorepeat: Bool = false) -> Bool {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down)!
         event.flags = flags
+        if autorepeat { event.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
         return monitor.handle(type: down ? .keyDown : .keyUp, event: event)
     }
 }

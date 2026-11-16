@@ -72,7 +72,7 @@ Funktioniert in jeder App mit Textfeld: Mail, Slack, Notizen, Browser, Word, VS 
 - **Meeting-Mitschrift**: erkennt automatisch, wenn eine andere App das Mikrofon nutzt, und transkribiert das Gespräch (eigene Stimme + Systemaudio der anderen Teilnehmer) in ~30-Sekunden-Abschnitten in den Verlauf – lokal, ohne Audiodatei. Abschaltbar; von Hand startbar über das Menüleisten-Symbol. macOS fragt beim ersten Mal nach der Erlaubnis für Systemaudio (macOS 14.2+).
 - **Verlauf** aller Diktate und Meeting-Mitschriften, durchsuchbar, lokal gespeichert
 - **Menüleisten-App**, auf Wunsch mit Autostart
-- Alternativ-Tasten: rechte ⌥, rechte ⌘ oder rechte ⌃ (Fn funktioniert nur auf Apple-Tastaturen)
+- Alternativ-Tasten: rechte ⌥, rechte ⌘, rechte ⌃, F5 – oder **Eigene Taste**: beliebige Taste drücken, z. B. F13–F19, Ziffernblock, Einfg oder ein anderer Modifier (Fn funktioniert nur auf Apple-Tastaturen)
 
 <p align="center">
   <img src="docs/images/settings.png" width="440" alt="Einstellungen">
@@ -99,6 +99,10 @@ Modelle kommen von [huggingface.co/ggerganov/whisper.cpp](https://huggingface.co
 - Die einzige Netzwerkverbindung ist der Modell-Download von Hugging Face – danach funktioniert Redefluss offline.
 
 ## Häufige Probleme
+
+**Fremdtastatur (z. B. Logitech MX Keys): Fn tut nichts.** Die Fn-Taste dieser Tastaturen wird in der Firmware verarbeitet und erreicht macOS nie – keine App kann sie sehen. In den Einstellungen „Eigene Taste …“ wählen und eine freie Taste drücken (F13–F19, Ziffernblock, Einfg …). Sondertasten, die ohne Logi Options+ nichts senden, dort zuerst auf eine F-Taste legen.
+
+**F5 soll die Diktiertaste sein, auf der Mac-Tastatur ist F5 aber die Mikrofontaste.** Einfach die Voreinstellung „F5“ wählen. Die Mikrofontaste kommt bei Redefluss als haltbare Taste an und wird dort abgefangen, bevor macOS-Diktat oder Siri sie sehen – „Standardfunktionstasten“ bleibt aus, Helligkeit und Lautstärke gehen weiter ohne Fn. Auf der MX Keys sendet F5 nur mit gehaltener Fn-Taste oder bei eingeschalteter Fn-Sperre. Mit Logi Options+ zählt auch deren Diktat-Taste – Options+ schickt dafür aber nur einen sofortigen Tipp, Halten kommt nie an. Redefluss schaltet mit so einem Tipp deshalb den Dauer-Modus ein, der nächste Tipp beendet ihn. Wer auf der MX Keys halten will: in Logi Options+ die F5-Taste („Diktat“) anklicken, „Tastenkürzel“ wählen und Fn + F5 aufnehmen (dabei Redefluss kurz beenden, sonst schluckt es die Taste beim Aufnehmen). Einen Eintrag „F5“ bietet Options+ für diese Taste nicht an. Options+ hält das Tastenkürzel dann so lange, wie die Taste unten ist – bestätigt mit einer MX Keys S.
 
 **Die Fn-Taste reagiert nicht.** Prüfe in *Systemeinstellungen → Datenschutz & Sicherheit → Bedienungshilfen*, ob Redefluss eingeschaltet ist. Steht es drin, funktioniert aber nicht (typisch nach einem Update): Eintrag mit „–" entfernen und Redefluss neu hinzufügen.
 

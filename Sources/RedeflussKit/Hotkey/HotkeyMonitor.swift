@@ -19,6 +19,15 @@ public enum HotkeyEvent {
 ///
 /// Push-to-talk: Taste halten, sprechen, loslassen.
 /// Freihand: Taste + Leertaste oder Doppeltipp; beenden mit erneutem Druck, Esc verwirft.
+/// Software-Tipp: Kommen Drücken und Loslassen im selben Augenblick (Logi Options+ postet für
+/// „Diktat" nur ein sofortiges keyDown/keyUp), kann niemand halten – dann schaltet jeder Tipp den
+/// Dauer-Modus um: einmal an, nochmal aus.
+///
+/// Die Diktiertaste ist entweder ein Modifier (Fn, rechte ⌘ … – kommt als flagsChanged) oder eine
+/// normale Taste (F5, F18, Ziffernblock … – kommt als keyDown/keyUp, beim Halten mit Autorepeat),
+/// siehe `HotkeyOption.Kind`. Eine normale Diktiertaste wird immer geschluckt, damit sie nicht
+/// nebenbei in der fokussierten App tippt – und bei F5, damit macOS-Diktat (Mikrofontaste tippen)
+/// und Siri (Mikrofontaste halten) sie nie zu sehen bekommen.
 ///
 /// Der Tap ist aktiv (nicht nur lauschend), damit Esc/Leertaste während der Aufnahme
 /// nicht in der fokussierten App landen. Das setzt die Bedienungshilfen-Berechtigung voraus.
@@ -28,6 +37,9 @@ public final class HotkeyMonitor {
     public var handsFreeEnabled = true
     /// Keycode der Taste, die im aktuellen Layout „v" schreibt.
     public var pasteKeyCode: Int64 = 9
+    /// Solange eine neue Diktiertaste aufgenommen wird, reicht der Tap alles unverändert durch –
+    /// sonst würde die bisherige Taste beim Aufnehmen ein Diktat starten.
+    public var isSuspended = false
 
     private enum State {
         case idle
@@ -48,6 +60,9 @@ public final class HotkeyMonitor {
     /// Kürzere Tipper gelten als Versehen (oder als erster Teil eines Doppeltipps).
     private let minimumHold: CFTimeInterval = 0.25
     private let doubleTapWindow: CFTimeInterval = 0.4
+    /// Noch kürzer schafft kein Finger: Drücken und Loslassen kamen aus Software (Logi Options+
+    /// braucht unter 1 ms) – so ein Tipp schaltet den Dauer-Modus ein statt zu verwerfen.
+    private let instantTap: CFTimeInterval = 0.02
 
     private static let keyCodeSpace: Int64 = 49
     private static let keyCodeEscape: Int64 = 53
@@ -107,26 +122,31 @@ public final class HotkeyMonitor {
 
     /// Gibt `true` zurück, wenn das Event geschluckt werden soll.
     func handle(type: CGEventType, event: CGEvent) -> Bool {
-        switch type {
-        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return false
+        }
+        guard !isSuspended else { return false }
+        switch type {
         case .flagsChanged:
             handleFlagsChanged(event)
             return false
         case .keyDown:
             return handleKeyDown(event)
         case .keyUp:
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            return swallowedKeyDowns.remove(keyCode) != nil
+            return handleKeyUp(event)
         default:
             return false
         }
     }
 
+    private func isHotkey(_ keyCode: Int64, kind: HotkeyOption.Kind) -> Bool {
+        hotkey.matches(keyCode: keyCode, kind: kind)
+    }
+
     private func handleFlagsChanged(_ event: CGEvent) {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        guard keyCode == hotkey.keyCode else {
+        guard isHotkey(keyCode, kind: .modifier) else {
             // Anderer Modifier während des Haltens (z. B. Fn+⌘ …) → kein Diktat.
             if case .holding = state {
                 state = .awaitingRelease
@@ -134,7 +154,11 @@ public final class HotkeyMonitor {
             }
             return
         }
-        let isDown = hotkey.isDown(in: event.flags)
+        hotkeyChanged(isDown: hotkey.isDown(in: event.flags))
+    }
+
+    /// Die Diktiertaste wurde gedrückt oder losgelassen – egal ob Modifier oder normale Taste.
+    private func hotkeyChanged(isDown: Bool) {
         let now = self.now()
 
         switch state {
@@ -151,11 +175,16 @@ public final class HotkeyMonitor {
             }
         case .holding(let since):
             guard !isDown else { return }
-            state = .idle
-            if now - since < minimumHold {
+            let held = now - since
+            if held < instantTap && handsFreeEnabled {
+                state = .handsFree
+                emit(.lockHandsFree)
+            } else if held < minimumHold {
+                state = .idle
                 lastShortTap = now
                 emit(.cancel)
             } else {
+                state = .idle
                 emit(.stop)
             }
         case .handsFree:
@@ -171,6 +200,12 @@ public final class HotkeyMonitor {
     private func handleKeyDown(_ event: CGEvent) -> Bool {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+
+        if isHotkey(keyCode, kind: .key) {
+            // Autorepeat beim Halten ist kein neuer Druck; die Taste selbst landet nie in der App.
+            if !isRepeat { hotkeyChanged(isDown: true) }
+            return true
+        }
 
         switch state {
         case .idle:
@@ -220,6 +255,16 @@ public final class HotkeyMonitor {
         }
     }
 
+    private func handleKeyUp(_ event: CGEvent) -> Bool {
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if isHotkey(keyCode, kind: .key) {
+            swallowedKeyDowns.remove(keyCode)
+            hotkeyChanged(isDown: false)
+            return true
+        }
+        return swallowedKeyDowns.remove(keyCode) != nil
+    }
+
     private func swallow(_ keyCode: Int64) -> Bool {
         swallowedKeyDowns.insert(keyCode)
         return true
@@ -247,23 +292,25 @@ private func hotkeyTapCallback(
 }
 
 extension HotkeyOption {
-    /// Virtueller Keycode, den das flagsChanged-Event für diese Taste trägt.
-    var keyCode: Int64 {
-        switch self {
-        case .fn: return 63
-        case .rightOption: return 61
-        case .rightCommand: return 54
-        case .rightControl: return 62
+    /// Geräteabhängige Masken (IOLLEvent.h), damit links/rechts unterscheidbar bleibt.
+    public static func modifierMask(forKeyCode keyCode: Int64) -> CGEventFlags? {
+        switch keyCode {
+        case 63: return .maskSecondaryFn
+        case 54: return CGEventFlags(rawValue: 0x10)   // rechte ⌘
+        case 55: return CGEventFlags(rawValue: 0x08)   // linke ⌘
+        case 56: return CGEventFlags(rawValue: 0x02)   // linke ⇧
+        case 60: return CGEventFlags(rawValue: 0x04)   // rechte ⇧
+        case 58: return CGEventFlags(rawValue: 0x20)   // linke ⌥
+        case 61: return CGEventFlags(rawValue: 0x40)   // rechte ⌥
+        case 59: return CGEventFlags(rawValue: 0x01)   // linke ⌃
+        case 62: return CGEventFlags(rawValue: 0x2000) // rechte ⌃
+        default: return nil
         }
     }
 
-    /// Geräteabhängige Masken (IOLLEvent.h), damit links/rechts unterscheidbar bleibt.
+    /// Ist diese Modifier-Taste laut den Flags eines flagsChanged-Events gerade unten?
     func isDown(in flags: CGEventFlags) -> Bool {
-        switch self {
-        case .fn: return flags.contains(.maskSecondaryFn)
-        case .rightOption: return flags.rawValue & 0x40 != 0
-        case .rightCommand: return flags.rawValue & 0x10 != 0
-        case .rightControl: return flags.rawValue & 0x2000 != 0
-        }
+        guard kind == .modifier, let mask = Self.modifierMask(forKeyCode: keyCode) else { return false }
+        return flags.rawValue & mask.rawValue != 0
     }
 }

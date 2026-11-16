@@ -102,10 +102,7 @@ struct OnboardingView: View {
 
         case .hotkey:
             StepLayout(symbol: "keyboard", title: "Deine Diktiertaste", text: "Halten = diktieren. Mit Taste + Leertaste oder Doppeltipp diktierst du freihändig, Esc verwirft.") {
-                Picker("Taste", selection: $settings.hotkey) {
-                    ForEach(HotkeyOption.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
+                HotkeyChooser(settings: settings, title: "Taste", style: .radio)
                 if settings.hotkey == .fn && globeConflict {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Die 🌐-Taste ist gerade mit „\(Permissions.globeKeyActionName)“ belegt.", systemImage: "exclamationmark.triangle.fill")
@@ -117,12 +114,6 @@ struct OnboardingView: View {
                         Button("Tastatur-Einstellungen öffnen") { Permissions.openKeyboardSettings() }
                     }
                     .padding(.top, 6)
-                }
-                if settings.hotkey == .fn {
-                    Text("Fn funktioniert nur auf Apple-Tastaturen. Bei Fremdtastaturen eine der rechten Modifier-Tasten wählen.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

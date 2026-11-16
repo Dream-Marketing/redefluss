@@ -97,9 +97,7 @@ private struct GeneralPane: View {
             }
 
             Section("Tastenkürzel") {
-                Picker("Diktiertaste", selection: $settings.hotkey) {
-                    ForEach(HotkeyOption.allCases) { Text($0.label).tag($0) }
-                }
+                HotkeyChooser(settings: settings, title: "Diktiertaste", style: .menu)
                 Toggle("Freihand-Modus (Taste + Leertaste oder Doppeltipp)", isOn: $settings.handsFreeEnabled)
                 LabeledContent("Letztes Diktat einfügen") { Text("⌃⌘V").foregroundStyle(.secondary) }
                 if settings.hotkey == .fn && Permissions.globeKeyConflicts {

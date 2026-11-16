@@ -6,7 +6,7 @@ let meetingLog = Logger(subsystem: "eu.dream-marketing.redefluss", category: "me
 
 /// Zeichnet ein Meeting auf: Systemaudio + Mikrofon (oder nur Mikrofon), schneidet den Strom in
 /// Abschnitte, transkribiert sie nacheinander und schreibt den Text fortlaufend in den Verlauf.
-/// Es wird kein Audio gespeichert – nur der Text.
+/// Gespeichert wird nur der Text – außer `meetingSaveAudio` ist eingeschaltet, dann zusätzlich eine .m4a-Datei.
 public final class MeetingRecorder: ObservableObject {
     public enum State: Equatable {
         case idle
@@ -37,6 +37,10 @@ public final class MeetingRecorder: ObservableObject {
     @Published public private(set) var source: Source?
     /// Grund, warum nur das Mikrofon läuft (Systemaudio fehlgeschlagen) – für die Einstellungen.
     @Published public private(set) var systemAudioProblem: String?
+    /// Die Audiodatei ließ sich zuletzt nicht anlegen oder schreiben – für die Einstellungen.
+    @Published public private(set) var audioFileProblem: String?
+    /// Läuft gerade eine Aufnahme, die auch als Audiodatei gespeichert wird?
+    @Published public private(set) var isSavingAudio = false
 
     /// Pegel 0…1 für die Wellenform (Main-Thread).
     var onLevel: ((Float) -> Void)?
@@ -51,6 +55,7 @@ public final class MeetingRecorder: ObservableObject {
     // Nur auf `queue`:
     private var chunker = TranscriptChunker()
     private var emittedSamples = 0
+    private var audioWriter: MeetingAudioWriter?
 
     // Nur auf dem Main-Thread:
     private var systemCapture: AnyObject?
@@ -60,6 +65,8 @@ public final class MeetingRecorder: ObservableObject {
     private var droppedChunks = false
     private var startedAt: Date?
     private var maxDurationTimer: Timer?
+    /// Nach dem Stopp: Rest-Abschnitt und Audiodatei sind noch nicht fertig – so lange nicht abschließen.
+    private var flushing = false
 
     /// Mehr Abschnitte warten nicht – sonst frisst ein zu langsamer Rechner den Speicher.
     private let maxPendingChunks = 6
@@ -70,6 +77,9 @@ public final class MeetingRecorder: ObservableObject {
         self.transcriber = transcriber
         self.history = history
         self.settings = settings
+        // Aufnahmen, die ein Absturz oder Stromausfall unfertig hinterlassen hat, jetzt fertigstellen.
+        let recordings = history.recordingsDirectory
+        queue.async { MeetingAudioWriter.recoverUnfinished(in: recordings) }
     }
 
     public var isActive: Bool { state != .idle }
@@ -85,6 +95,25 @@ public final class MeetingRecorder: ObservableObject {
         let microphoneUID = settings.inputDeviceUID
         var source: Source = .microphoneOnly
         systemAudioProblem = nil
+        let started = Date()
+
+        // Vor den Aufnahmequellen einrichten, damit schon die ersten Samples in der Datei landen.
+        var writer: MeetingAudioWriter?
+        audioFileProblem = nil
+        if settings.meetingSaveAudio {
+            let url = history.recordingsDirectory.appendingPathComponent(MeetingAudioWriter.fileName(date: started, appName: appName))
+            do {
+                writer = try MeetingAudioWriter(url: url)
+            } catch {
+                audioFileProblem = error.localizedDescription
+                meetingLog.error("Audiodatei nicht angelegt, nur Text: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        queue.sync {
+            chunker = TranscriptChunker()
+            emittedSamples = 0
+            audioWriter = writer
+        }
 
         if settings.meetingSystemAudio, #available(macOS 14.2, *) {
             let capture = SystemAudioCapture()
@@ -107,26 +136,26 @@ public final class MeetingRecorder: ObservableObject {
             do {
                 try recorder.start(deviceUID: microphoneUID)
             } catch {
+                discardAudioFile()
                 throw StartError.capture(error.localizedDescription)
             }
             microphone = recorder
         }
 
-        queue.sync {
-            chunker = TranscriptChunker()
-            emittedSamples = 0
-        }
         pendingChunks = 0
         droppedChunks = false
+        isSavingAudio = writer != nil
 
-        let started = Date()
-        let entry = HistoryItem(date: started, text: "", audioSeconds: 0, appName: appName, language: nil, kind: .meeting, inProgress: true)
+        let entry = HistoryItem(
+            date: started, text: "", audioSeconds: 0, appName: appName, language: nil, kind: .meeting, inProgress: true,
+            audioFile: writer?.url.lastPathComponent
+        )
         history.add(entry)
         item = entry
         startedAt = started
         self.source = source
         state = .recording(appName: appName, started: started)
-        meetingLog.notice("Mitschrift gestartet (\(appName, privacy: .public), Quelle: \(String(describing: source), privacy: .public))")
+        meetingLog.notice("Mitschrift gestartet (\(appName, privacy: .public), Quelle: \(String(describing: source), privacy: .public), Audiodatei: \(writer != nil))")
 
         maxDurationTimer?.invalidate()
         maxDurationTimer = Timer.scheduledTimer(withTimeInterval: maxDuration, repeats: false) { [weak self] _ in self?.stop() }
@@ -137,12 +166,48 @@ public final class MeetingRecorder: ObservableObject {
         guard case .recording(let appName, _) = state else { return }
         maxDurationTimer?.invalidate()
         stopCapture()
+        flushing = true
         state = .finishing(appName: appName)
         meetingLog.notice("Mitschrift gestoppt nach \(Int(self.elapsed)) s, \(self.pendingChunks) Abschnitte offen")
         queue.async { [weak self] in
             guard let self else { return }
             if let rest = self.chunker.flush() { self.enqueue(rest) }
-            DispatchQueue.main.async { self.finishIfDone() }
+            self.finishAudioFile()
+            DispatchQueue.main.async {
+                self.flushing = false
+                self.finishIfDone()
+            }
+        }
+    }
+
+    /// Beim Beenden der App: Aufnahme anhalten und die Audiodatei abschließen – sonst ist sie nicht abspielbar.
+    public func finalizeAudioFile() {
+        guard isSavingAudio else { return }
+        stopCapture()
+        // Alles bis hierher Aufgenommene ist schon geschrieben (`ingest` läuft über dieselbe Queue).
+        // Reicht die Zeit nicht, bleibt die Rohdatei liegen und wird beim nächsten Start gewandelt.
+        queue.sync { finishAudioFile() }
+    }
+
+    /// Auf `queue`: Rohdatei in die .m4a wandeln.
+    private func finishAudioFile() {
+        guard let writer = audioWriter else { return }
+        audioWriter = nil
+        do {
+            try writer.finish()
+        } catch {
+            let message = error.localizedDescription
+            meetingLog.error("Audiodatei nicht fertiggestellt: \(message, privacy: .public)")
+            DispatchQueue.main.async { [weak self] in self?.audioFileProblem = message }
+        }
+    }
+
+    /// Start fehlgeschlagen: die leere Datei wieder entfernen.
+    private func discardAudioFile() {
+        queue.sync {
+            guard let writer = audioWriter else { return }
+            writer.discard()
+            audioWriter = nil
         }
     }
 
@@ -153,7 +218,26 @@ public final class MeetingRecorder: ObservableObject {
         DispatchQueue.main.async { [weak self] in self?.onLevel?(level) }
         queue.async { [weak self] in
             guard let self else { return }
+            self.write(samples)
             for chunk in self.chunker.append(samples) { self.enqueue(chunk) }
+        }
+    }
+
+    /// Auf `queue`. Ein Schreibfehler (Platte voll) beendet nur die Audiodatei, nicht die Mitschrift;
+    /// was bis dahin aufgenommen wurde, bleibt erhalten.
+    private func write(_ samples: [Float]) {
+        guard let writer = audioWriter else { return }
+        do {
+            try writer.append(samples)
+        } catch {
+            audioWriter = nil
+            try? writer.finish()
+            let message = error.localizedDescription
+            meetingLog.error("Audiodatei abgebrochen: \(message, privacy: .public)")
+            DispatchQueue.main.async { [weak self] in
+                self?.audioFileProblem = message
+                self?.isSavingAudio = false
+            }
         }
     }
 
@@ -199,7 +283,7 @@ public final class MeetingRecorder: ObservableObject {
     }
 
     private func finishIfDone() {
-        guard case .finishing = state, pendingChunks == 0 else { return }
+        guard case .finishing = state, pendingChunks == 0, !flushing else { return }
         var result: HistoryItem?
         if var finished = item {
             finished.inProgress = false
@@ -217,6 +301,7 @@ public final class MeetingRecorder: ObservableObject {
         item = nil
         startedAt = nil
         source = nil
+        isSavingAudio = false
         state = .idle
         meetingLog.notice("Mitschrift abgeschlossen: \(result?.text.count ?? 0) Zeichen")
         onFinished?(result)

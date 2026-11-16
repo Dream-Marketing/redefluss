@@ -2,29 +2,96 @@ import Foundation
 import Combine
 
 /// Taste, die das Diktat auslöst (gedrückt halten = aufnehmen).
-public enum HotkeyOption: String, CaseIterable, Identifiable, Codable {
-    case fn
-    case rightOption
-    case rightCommand
-    case rightControl
+///
+/// Vier Voreinstellungen (Fn und die rechten Modifier) – oder eine beliebige selbst aufgenommene
+/// Taste, z. B. F13–F19, Ziffernblock oder eine Sondertaste einer Fremdtastatur (Logitech MX Keys & Co.,
+/// deren Fn-Taste macOS nie erreicht).
+public struct HotkeyOption: Codable, Hashable, Identifiable {
+    public enum Kind: String, Codable {
+        /// Modifier-Taste (Fn, ⌘, ⌥, ⌃, ⇧) – kommt als flagsChanged-Event.
+        case modifier
+        /// Normale Taste – kommt als keyDown/keyUp.
+        case key
+    }
 
-    public var id: String { rawValue }
+    public let kind: Kind
+    /// Virtueller Keycode (kVK_…), unabhängig vom Layout.
+    public let keyCode: Int64
+    /// Anzeigename, z. B. „F18", „Num =" oder „Linke ⇧".
+    public let name: String
 
+    public init(kind: Kind, keyCode: Int64, name: String) {
+        self.kind = kind
+        self.keyCode = keyCode
+        self.name = name
+    }
+
+    public static let fn = HotkeyOption(kind: .modifier, keyCode: 63, name: "Fn")
+    public static let rightOption = HotkeyOption(kind: .modifier, keyCode: 61, name: "⌥")
+    public static let rightCommand = HotkeyOption(kind: .modifier, keyCode: 54, name: "⌘")
+    public static let rightControl = HotkeyOption(kind: .modifier, keyCode: 62, name: "⌃")
+    /// F5. Auf der Apple-Tastatur ist das ohne „Standardfunktionstasten" die Mikrofontaste (Keycode 176),
+    /// mit Fn oder auf Fremdtastaturen ein normales F5 (Keycode 96) – beides zählt, siehe `matches`.
+    public static let f5 = HotkeyOption(kind: .key, keyCode: 96, name: "F5")
+    /// Feste Auswahl in der Reihenfolge der Oberfläche.
+    public static let presets: [HotkeyOption] = [.fn, .rightOption, .rightCommand, .rightControl, .f5]
+
+    public var id: String { "\(kind.rawValue)-\(keyCode)" }
+    public var isPreset: Bool { Self.presets.contains(self) }
+
+    /// F1–F12 außer F5: auf der Apple-Tastatur nur mit „Standardfunktionstasten" erreichbar.
+    public var isFunctionKey: Bool { kind == .key && Self.functionKeyCodes.contains(keyCode) && !isMicrophoneKey }
+    /// F5 bzw. die Mikrofontaste der Apple-Tastatur – die Voreinstellung `f5`.
+    public var isMicrophoneKey: Bool { kind == .key && Self.microphoneKeyCodes.contains(keyCode) }
+    private static let functionKeyCodes: Set<Int64> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
+    /// 96 = F5, 176 = Mikrofontaste (F5 der Apple-Tastatur ohne Fn – auch das, was Logi Options+ für „Diktat" schickt).
+    static let microphoneKeyCodes: Set<Int64> = [96, 176]
+
+    /// Löst ein Event mit diesem Keycode diese Diktiertaste aus? Die Voreinstellung F5 nimmt beide Codes.
+    public func matches(keyCode: Int64, kind: Kind) -> Bool {
+        guard kind == self.kind else { return false }
+        return keyCode == self.keyCode || (self == .f5 && Self.microphoneKeyCodes.contains(keyCode))
+    }
+
+    /// Langer Name für Auswahllisten.
     public var label: String {
         switch self {
         case .fn: return "Fn / 🌐"
         case .rightOption: return "Rechte ⌥ Option"
         case .rightCommand: return "Rechte ⌘ Command"
         case .rightControl: return "Rechte ⌃ Control"
+        case .f5: return "F5 / 🎤 Mikrofontaste"
+        default: return name
         }
     }
 
-    public var shortLabel: String {
-        switch self {
-        case .fn: return "Fn"
-        case .rightOption: return "⌥"
-        case .rightCommand: return "⌘"
-        case .rightControl: return "⌃"
+    /// Kurzform für die Leiste („Fn halten oder klicken").
+    public var shortLabel: String { name }
+
+    /// Gleiche Taste → gleiche Option, egal wie sie benannt wurde.
+    public static func == (lhs: HotkeyOption, rhs: HotkeyOption) -> Bool {
+        lhs.kind == rhs.kind && lhs.keyCode == rhs.keyCode
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(keyCode)
+    }
+
+    /// Eine aufgenommene Taste, die einer Voreinstellung entspricht, wird zu dieser (die Mikrofontaste zu F5).
+    public var canonical: HotkeyOption {
+        if isMicrophoneKey { return .f5 }
+        return Self.presets.first { $0 == self } ?? self
+    }
+
+    /// Frühere Versionen speicherten nur den Namen der Voreinstellung.
+    static func legacy(rawValue: String) -> HotkeyOption? {
+        switch rawValue {
+        case "fn": return .fn
+        case "rightOption": return .rightOption
+        case "rightCommand": return .rightCommand
+        case "rightControl": return .rightControl
+        default: return nil
         }
     }
 }
@@ -60,7 +127,7 @@ public final class AppSettings: ObservableObject {
 
     private let defaults: UserDefaults
 
-    @Published public var hotkey: HotkeyOption { didSet { defaults.set(hotkey.rawValue, forKey: "hotkey") } }
+    @Published public var hotkey: HotkeyOption { didSet { saveCodable(hotkey, forKey: "hotkey") } }
     @Published public var handsFreeEnabled: Bool { didSet { defaults.set(handsFreeEnabled, forKey: "handsFreeEnabled") } }
     /// "auto" oder ISO-Code ("de", "en", …).
     @Published public var language: String { didSet { defaults.set(language, forKey: "language") } }
@@ -88,10 +155,17 @@ public final class AppSettings: ObservableObject {
     @Published public var meetingAutoRecord: Bool { didSet { defaults.set(meetingAutoRecord, forKey: "meetingAutoRecord") } }
     /// Dabei auch das Systemaudio (die anderen Teilnehmer) aufnehmen – braucht die Berechtigung „Systemaudioaufnahme".
     @Published public var meetingSystemAudio: Bool { didSet { defaults.set(meetingSystemAudio, forKey: "meetingSystemAudio") } }
+    /// Das Gespräch zusätzlich als Audiodatei ablegen (Standard: aus – sonst wird nur Text gespeichert).
+    @Published public var meetingSaveAudio: Bool { didSet { defaults.set(meetingSaveAudio, forKey: "meetingSaveAudio") } }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        hotkey = HotkeyOption(rawValue: defaults.string(forKey: "hotkey") ?? "") ?? .fn
+        if let data = defaults.data(forKey: "hotkey"),
+           let decoded = try? JSONDecoder().decode(HotkeyOption.self, from: data) {
+            hotkey = decoded.canonical
+        } else {
+            hotkey = defaults.string(forKey: "hotkey").flatMap(HotkeyOption.legacy) ?? .fn
+        }
         handsFreeEnabled = defaults.object(forKey: "handsFreeEnabled") as? Bool ?? true
         language = defaults.string(forKey: "language") ?? "auto"
         modelPath = defaults.string(forKey: "modelPath") ?? ""
@@ -117,6 +191,7 @@ public final class AppSettings: ObservableObject {
         }
         meetingAutoRecord = defaults.object(forKey: "meetingAutoRecord") as? Bool ?? true
         meetingSystemAudio = defaults.object(forKey: "meetingSystemAudio") as? Bool ?? true
+        meetingSaveAudio = defaults.bool(forKey: "meetingSaveAudio")
     }
 
     /// Eigene Wörter als Kontext für Whisper; lange Listen werden gekürzt (Prompt ≈ 224 Tokens).

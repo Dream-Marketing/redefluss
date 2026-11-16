@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import RedeflussKit
 
@@ -145,5 +146,128 @@ final class HistoryStoreTests: XCTestCase {
         let restored = reloaded.items.first { $0.id == meeting.id }
         XCTAssertEqual(restored?.inProgress, false)
         XCTAssertTrue(restored?.isMeeting ?? false)
+    }
+}
+
+final class MeetingAudioTests: XCTestCase {
+    private var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("redefluss-audio-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func testWriterProducesPlayableFileWithFullDuration() throws {
+        let url = directory.appendingPathComponent("Aufnahmen/test.m4a")
+        let writer = try MeetingAudioWriter(url: url)
+        let rate = AudioRecorder.sampleRate
+        let tone = (0..<Int(rate * 3)).map { Float(sin(Double($0) * 2 * .pi * 220 / rate) * 0.2) }
+        // In Blöcken, wie die Aufnahme sie liefert.
+        for start in stride(from: 0, to: tone.count, by: 1600) {
+            try writer.append(Array(tone[start..<min(start + 1600, tone.count)]))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "Die .m4a entsteht erst am Ende")
+        try writer.finish()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: writer.rawURL.path))
+
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(Double(file.length) / file.fileFormat.sampleRate, 3, accuracy: 0.2)
+        XCTAssertEqual(file.fileFormat.channelCount, 1)
+        let size = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int)
+        XCTAssertLessThan(size, 40_000, "AAC statt unkomprimiert")
+    }
+
+    /// Absturz mitten im Gespräch: Der Writer wird nie abgeschlossen – beim nächsten Start ist die Aufnahme trotzdem da.
+    func testRecordingSurvivesCrashAndIsRecoveredOnNextLaunch() throws {
+        let recordings = directory.appendingPathComponent("Aufnahmen")
+        let url = recordings.appendingPathComponent("Meeting abgestürzt.m4a")
+        let rate = AudioRecorder.sampleRate
+        let tone = (0..<Int(rate * 4)).map { Float(sin(Double($0) * 2 * .pi * 220 / rate) * 0.2) }
+        var writer: MeetingAudioWriter? = try MeetingAudioWriter(url: url)
+        try writer?.append(tone)
+        try writer?.append([.nan, .infinity, 2, -2]) // darf nicht selbst zum Absturz führen
+        let raw = try XCTUnwrap(writer?.rawURL)
+        writer = nil // „Absturz": kein finish()
+
+        // Ein halbes Sample am Ende, wie nach einem abgebrochenen Schreibvorgang.
+        let handle = try FileHandle(forWritingTo: raw)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data([0x7f]))
+        try handle.close()
+
+        XCTAssertEqual(MeetingAudioWriter.recoverUnfinished(in: recordings).map(\.lastPathComponent), [url.lastPathComponent])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertEqual(Double(file.length) / file.fileFormat.sampleRate, 4, accuracy: 0.2)
+        XCTAssertEqual(MeetingAudioWriter.recoverUnfinished(in: recordings), [], "Zweiter Start findet nichts mehr")
+    }
+
+    func testEmptyRecordingLeavesNoFile() throws {
+        let url = directory.appendingPathComponent("Aufnahmen/leer.m4a")
+        let writer = try MeetingAudioWriter(url: url)
+        try writer.finish()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: writer.rawURL.path))
+    }
+
+    func testFileNameHasNoPathSeparators() {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        let name = MeetingAudioWriter.fileName(date: date, appName: "../Zoom: Call/1")
+        XCTAssertFalse(name.contains("/"))
+        XCTAssertFalse(name.contains(":"))
+        XCTAssertTrue(name.hasPrefix("Meeting 20"))
+        XCTAssertTrue(name.hasSuffix("Zoom  Call 1.m4a"), name)
+        XCTAssertEqual(MeetingAudioWriter.fileName(date: date, appName: "").components(separatedBy: " ").count, 3)
+    }
+
+    func testSavingAudioIsOffByDefault() {
+        let name = "redefluss-test-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertFalse(AppSettings(defaults: defaults).meetingSaveAudio)
+    }
+
+    func testDeletingHistoryEntryDeletesItsRecording() throws {
+        let store = HistoryStore(directory: directory)
+        try FileManager.default.createDirectory(at: store.recordingsDirectory, withIntermediateDirectories: true)
+        func meeting(_ file: String) throws -> HistoryItem {
+            try Data([1, 2, 3]).write(to: store.recordingsDirectory.appendingPathComponent(file))
+            let item = HistoryItem(date: Date(), text: "[00:00] Hallo", audioSeconds: 5, appName: "Zoom", language: "de", kind: .meeting, audioFile: file)
+            store.add(item)
+            return item
+        }
+        let first = try meeting("a.m4a")
+        let second = try meeting("b.m4a")
+        XCTAssertEqual(store.recordingCount, 2)
+        XCTAssertNotNil(store.audioURL(for: first))
+
+        // Auch die Rohdatei einer noch laufenden Aufnahme verschwindet mit dem Eintrag.
+        let raw = store.recordingsDirectory.appendingPathComponent("a.m4a.pcm")
+        try Data([1, 2]).write(to: raw)
+        store.delete(first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: raw.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.recordingsDirectory.appendingPathComponent("a.m4a").path))
+        XCTAssertNotNil(store.audioURL(for: second))
+
+        // Der Verweis übersteht einen Neustart; „Alles löschen" räumt auch die Dateien ab.
+        let reloaded = HistoryStore(directory: directory)
+        XCTAssertEqual(reloaded.items.first?.audioFile, "b.m4a")
+        reloaded.clear()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.recordingsDirectory.appendingPathComponent("b.m4a").path))
+    }
+
+    /// Ein manipulierter Verlauf darf keine Datei außerhalb des Aufnahmen-Ordners löschen.
+    func testAudioReferenceCannotLeaveRecordingsDirectory() throws {
+        let store = HistoryStore(directory: directory)
+        let outside = directory.appendingPathComponent("wichtig.txt")
+        try Data([1]).write(to: outside)
+        let item = HistoryItem(date: Date(), text: "x", audioSeconds: 1, appName: nil, language: nil, kind: .meeting, audioFile: "../wichtig.txt")
+        store.add(item)
+        store.delete(item)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
     }
 }

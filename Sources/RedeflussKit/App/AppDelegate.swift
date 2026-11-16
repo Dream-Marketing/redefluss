@@ -5,6 +5,8 @@ import Combine
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = AppSettings.shared
     private lazy var controller = DictationController(settings: settings)
+    /// Erst nach dem Start gibt es einen Controller (eine zweite Instanz beendet sich vorher).
+    private var launched = false
     private let navigation = SettingsNavigation()
 
     private var statusItem: NSStatusItem?
@@ -18,6 +20,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         if terminateIfAlreadyRunning() { return }
+        launched = true
 
         setUpMainMenu()
         setUpStatusItem()
@@ -67,6 +70,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    public func applicationWillTerminate(_ notification: Notification) {
+        // Eine laufende Meeting-Aufnahme abschließen, sonst bleibt die Audiodatei unlesbar.
+        if launched { controller.meeting.finalizeAudioFile() }
+    }
 
     private func terminateIfAlreadyRunning() -> Bool {
         guard let bundleID = Bundle.main.bundleIdentifier else { return false }

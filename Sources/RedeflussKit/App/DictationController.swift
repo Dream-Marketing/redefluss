@@ -89,6 +89,12 @@ public final class DictationController: ObservableObject {
         settings.$handsFreeEnabled
             .sink { [weak self] enabled in self?.hotkey.handsFreeEnabled = enabled }
             .store(in: &cancellables)
+        // Während in den Einstellungen eine neue Diktiertaste aufgenommen wird, darf die alte nichts auslösen.
+        NotificationCenter.default.publisher(for: .hotkeyRecordingChanged)
+            .sink { [weak self] note in
+                self?.hotkey.isSuspended = note.userInfo?[HotkeyRecorder.recordingKey] as? Bool ?? false
+            }
+            .store(in: &cancellables)
         settings.$showIdlePill
             .sink { [weak self] show in self?.flowBar.showIdle = show }
             .store(in: &cancellables)
@@ -394,7 +400,8 @@ public final class DictationController: ObservableObject {
             if item == nil {
                 self.flowBar.showMessage("Meeting ohne Sprache – nichts gespeichert", duration: 3)
             } else {
-                self.flowBar.showMessage("Meeting-Mitschrift im Verlauf gespeichert", duration: 4) { [weak self] in
+                let saved = item.flatMap(self.history.audioURL(for:)) != nil
+                self.flowBar.showMessage(saved ? "Mitschrift und Aufnahme im Verlauf gespeichert" : "Meeting-Mitschrift im Verlauf gespeichert", duration: 4) { [weak self] in
                     self?.onNeedsAttention?(.history)
                 }
             }

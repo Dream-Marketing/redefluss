@@ -42,6 +42,18 @@ public enum Permissions {
         open("x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
     }
 
+    /// Tastatur → Tastaturkurzbefehle → Funktionstasten.
+    public static func openFunctionKeySettings() {
+        open("x-apple.systempreferences:com.apple.Keyboard-Settings.extension?FunctionKeys")
+    }
+
+    /// „F1, F2 usw. als Standardfunktionstasten verwenden". Solange das aus ist, setzt macOS die F-Reihe
+    /// der Apple-Tastatur vor jeder App in Sonderfunktionen um (F5 = Mikrofon → macOS-Diktierfunktion),
+    /// und ein Event-Tap bekommt nie ein F5 zu sehen. Fremdtastaturen betrifft das nicht.
+    public static var standardFunctionKeysEnabled: Bool {
+        UserDefaults.standard.object(forKey: "com.apple.keyboard.fnState") as? Bool ?? false
+    }
+
     /// Einstellung „🌐-Taste drücken für": 0 = Keine Aktion, 1 = Eingabequelle,
     /// 2 = Emoji & Symbole, 3 = Diktierfunktion. Alles außer 0 kollidiert mit Fn als Diktiertaste.
     public static var globeKeyAction: Int? {

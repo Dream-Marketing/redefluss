@@ -91,38 +91,50 @@ public final class TextInserter {
 public enum KeyboardLayout {
     /// Sucht den Keycode, der im aktuellen Layout das Zeichen erzeugt (z. B. „v" bei Dvorak ≠ 9).
     public static func keyCode(for character: Character) -> CGKeyCode? {
+        let target = String(character).lowercased()
+        return withCurrentLayout { layout in
+            for keyCode in 0..<128 where translate(CGKeyCode(keyCode), in: layout)?.lowercased() == target {
+                return CGKeyCode(keyCode)
+            }
+            return nil
+        }
+    }
+
+    /// Zeichen, das der Keycode im aktuellen Layout ohne Modifier erzeugt (nil, wenn die Taste nichts tippt).
+    public static func character(for keyCode: CGKeyCode) -> String? {
+        withCurrentLayout { translate(keyCode, in: $0) }
+    }
+
+    private static func withCurrentLayout<T>(_ body: (UnsafePointer<UCKeyboardLayout>) -> T?) -> T? {
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue()
                 ?? TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
               let rawData = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
             return nil
         }
         let layoutData = Unmanaged<CFData>.fromOpaque(rawData).takeUnretainedValue() as Data
-        let target = String(character).lowercased()
-
-        return layoutData.withUnsafeBytes { buffer -> CGKeyCode? in
+        return layoutData.withUnsafeBytes { buffer -> T? in
             guard let layout = buffer.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return nil }
-            for keyCode in 0..<128 {
-                var deadKeyState: UInt32 = 0
-                var length = 0
-                var chars = [UniChar](repeating: 0, count: 4)
-                let status = UCKeyTranslate(
-                    layout,
-                    UInt16(keyCode),
-                    UInt16(kUCKeyActionDisplay),
-                    0,
-                    UInt32(LMGetKbdType()),
-                    OptionBits(kUCKeyTranslateNoDeadKeysBit),
-                    &deadKeyState,
-                    chars.count,
-                    &length,
-                    &chars
-                )
-                if status == noErr, length > 0,
-                   String(utf16CodeUnits: chars, count: length).lowercased() == target {
-                    return CGKeyCode(keyCode)
-                }
-            }
-            return nil
+            return body(layout)
         }
+    }
+
+    private static func translate(_ keyCode: CGKeyCode, in layout: UnsafePointer<UCKeyboardLayout>) -> String? {
+        var deadKeyState: UInt32 = 0
+        var length = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+        let status = UCKeyTranslate(
+            layout,
+            UInt16(keyCode),
+            UInt16(kUCKeyActionDisplay),
+            0,
+            UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit),
+            &deadKeyState,
+            chars.count,
+            &length,
+            &chars
+        )
+        guard status == noErr, length > 0 else { return nil }
+        return String(utf16CodeUnits: chars, count: length)
     }
 }

@@ -1,5 +1,9 @@
 # Änderungen
 
+## Unveröffentlicht
+
+- **Meeting-Aufnahme (macOS):** Auf Wunsch speichert Redefluss das Gespräch zusätzlich zur Mitschrift als Audiodatei (.m4a, etwa 15 MB pro Stunde). Standardmäßig aus; einschalten unter Einstellungen → Meetings. Die Datei hängt am Verlaufseintrag („Aufnahme zeigen") und wird mit ihm gelöscht. Die Aufnahme übersteht einen Absturz oder Stromausfall und wird beim nächsten Start fertiggestellt.
+
 ## 0.3.1 – 2026-11-11
 
 - **Windows:** Die App startete nicht (beendete sich ohne Meldung). Behoben; Startfehler zeigen jetzt eine Meldung und stehen im Protokoll.

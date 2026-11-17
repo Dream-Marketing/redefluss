@@ -91,7 +91,7 @@ public final class MeetingRecorder: ObservableObject {
     }
 
     /// Startet die Aufzeichnung; `appName` erscheint in Leiste und Verlauf.
-    func start(appName: String) throws {
+    func start(appName: String, voiceProcessing: Bool) throws {
         guard state == .idle else { throw StartError.alreadyRunning }
         let microphoneUID = settings.inputDeviceUID
         var source: Source = .microphoneOnly
@@ -132,7 +132,7 @@ public final class MeetingRecorder: ObservableObject {
 
         let recorder = AudioRecorder()
         recorder.accumulates = false
-        recorder.usesVoiceProcessing = true
+        recorder.usesVoiceProcessing = voiceProcessing
         let mixesSystemAudio = source == .systemAndMicrophone
         recorder.onSamples = { [weak self] samples in
             if mixesSystemAudio {

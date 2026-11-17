@@ -315,3 +315,25 @@ final class MeetingMixerTests: XCTestCase {
         XCTAssertEqual(mixer.flush(), [])
     }
 }
+
+final class VoiceProcessingPolicyTests: XCTestCase {
+    private func user(_ bundleID: String) -> MicrophoneUser {
+        MicrophoneUser(pid: 1, bundleID: bundleID, name: bundleID)
+    }
+
+    func testNotNeededWithoutOtherMicrophoneUsers() {
+        XCTAssertFalse(VoiceProcessingPolicy.isNeeded(for: []))
+    }
+
+    func testNotNeededForTeams() {
+        XCTAssertFalse(VoiceProcessingPolicy.isNeeded(for: [user("com.microsoft.teams2.modulehost")]))
+    }
+
+    func testNeededDuringMacCall() {
+        XCTAssertTrue(VoiceProcessingPolicy.isNeeded(for: [user("com.apple.avconferenced")]))
+    }
+
+    func testNeededWhenMacCallRunsAlongsideOtherApps() {
+        XCTAssertTrue(VoiceProcessingPolicy.isNeeded(for: [user("com.microsoft.teams2.modulehost"), user("com.apple.avconferenced")]))
+    }
+}

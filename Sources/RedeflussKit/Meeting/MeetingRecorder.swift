@@ -54,6 +54,7 @@ public final class MeetingRecorder: ObservableObject {
 
     // Nur auf `queue`:
     private var chunker = TranscriptChunker()
+    private var mixer = MeetingMixer(maxLag: Int(AudioRecorder.sampleRate / 2))
     private var emittedSamples = 0
     private var audioWriter: MeetingAudioWriter?
 
@@ -90,7 +91,7 @@ public final class MeetingRecorder: ObservableObject {
     }
 
     /// Startet die Aufzeichnung; `appName` erscheint in Leiste und Verlauf.
-    func start(appName: String) throws {
+    func start(appName: String, voiceProcessing: Bool) throws {
         guard state == .idle else { throw StartError.alreadyRunning }
         let microphoneUID = settings.inputDeviceUID
         var source: Source = .microphoneOnly
@@ -111,15 +112,16 @@ public final class MeetingRecorder: ObservableObject {
         }
         queue.sync {
             chunker = TranscriptChunker()
+            mixer = MeetingMixer(maxLag: Int(AudioRecorder.sampleRate / 2))
             emittedSamples = 0
             audioWriter = writer
         }
 
         if settings.meetingSystemAudio, #available(macOS 14.2, *) {
             let capture = SystemAudioCapture()
-            capture.onSamples = { [weak self] samples in self?.ingest(samples) }
+            capture.onSamples = { [weak self] samples in self?.receive(samples, from: .system) }
             do {
-                try capture.start(microphoneUID: microphoneUID)
+                try capture.start()
                 systemCapture = capture
                 source = .systemAndMicrophone
             } catch {
@@ -128,19 +130,26 @@ public final class MeetingRecorder: ObservableObject {
             }
         }
 
-        if source == .microphoneOnly {
-            let recorder = AudioRecorder()
-            recorder.accumulates = false
-            recorder.onSamples = { [weak self] samples in self?.ingest(samples) }
-            recorder.onInterruption = { [weak self] in self?.restartMicrophone() }
-            do {
-                try recorder.start(deviceUID: microphoneUID)
-            } catch {
-                discardAudioFile()
-                throw StartError.capture(error.localizedDescription)
+        let recorder = AudioRecorder()
+        recorder.accumulates = false
+        recorder.usesVoiceProcessing = voiceProcessing
+        let mixesSystemAudio = source == .systemAndMicrophone
+        recorder.onSamples = { [weak self] samples in
+            if mixesSystemAudio {
+                self?.receive(samples, from: .microphone)
+            } else {
+                self?.ingest(samples)
             }
-            microphone = recorder
         }
+        recorder.onInterruption = { [weak self] in self?.restartMicrophone() }
+        do {
+            try recorder.start(deviceUID: microphoneUID)
+        } catch {
+            stopCapture()
+            discardAudioFile()
+            throw StartError.capture(error.localizedDescription)
+        }
+        microphone = recorder
 
         pendingChunks = 0
         droppedChunks = false
@@ -171,6 +180,8 @@ public final class MeetingRecorder: ObservableObject {
         meetingLog.notice("Mitschrift gestoppt nach \(Int(self.elapsed)) s, \(self.pendingChunks) Abschnitte offen")
         queue.async { [weak self] in
             guard let self else { return }
+            let mixedRest = self.mixer.flush()
+            if !mixedRest.isEmpty { self.consume(mixedRest) }
             if let rest = self.chunker.flush() { self.enqueue(rest) }
             self.finishAudioFile()
             DispatchQueue.main.async {
@@ -214,13 +225,22 @@ public final class MeetingRecorder: ObservableObject {
     // MARK: - Audio → Abschnitte
 
     private func ingest(_ samples: [Float]) {
-        let level = AudioRecorder.level(of: samples)
-        DispatchQueue.main.async { [weak self] in self?.onLevel?(level) }
+        queue.async { [weak self] in self?.consume(samples) }
+    }
+
+    private func receive(_ samples: [Float], from source: MeetingMixer.Source) {
         queue.async { [weak self] in
             guard let self else { return }
-            self.write(samples)
-            for chunk in self.chunker.append(samples) { self.enqueue(chunk) }
+            let mixed = self.mixer.append(samples, from: source)
+            if !mixed.isEmpty { self.consume(mixed) }
         }
+    }
+
+    private func consume(_ samples: [Float]) {
+        let level = AudioRecorder.level(of: samples)
+        DispatchQueue.main.async { [weak self] in self?.onLevel?(level) }
+        write(samples)
+        for chunk in chunker.append(samples) { enqueue(chunk) }
     }
 
     /// Auf `queue`. Ein Schreibfehler (Platte voll) beendet nur die Audiodatei, nicht die Mitschrift;
@@ -318,7 +338,7 @@ public final class MeetingRecorder: ObservableObject {
         microphone = nil
     }
 
-    /// Nur-Mikrofon-Modus: Nach einem Gerätewechsel (AirPods) die Engine neu starten, statt stumm weiterzulaufen.
+    /// Nach einem Gerätewechsel (AirPods) die Engine neu starten, statt stumm weiterzulaufen.
     private func restartMicrophone() {
         guard case .recording = state, let recorder = microphone else { return }
         _ = recorder.stop()

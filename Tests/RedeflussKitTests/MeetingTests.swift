@@ -271,3 +271,69 @@ final class MeetingAudioTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
     }
 }
+
+final class MeetingMixerTests: XCTestCase {
+    func testMixesBothSourcesSampleBySample() {
+        var mixer = MeetingMixer(maxLag: 100)
+        XCTAssertEqual(mixer.append([0.1, 0.2, 0.3], from: .system), [])
+        let mixed = mixer.append([0.1, 0.1], from: .microphone)
+        XCTAssertEqual(mixed.count, 2)
+        XCTAssertEqual(mixed[0], 0.2, accuracy: 0.0001)
+        XCTAssertEqual(mixed[1], 0.3, accuracy: 0.0001)
+    }
+
+    func testKeepsUnmatchedRestForNextCall() {
+        var mixer = MeetingMixer(maxLag: 100)
+        _ = mixer.append([0.1, 0.2, 0.3], from: .system)
+        _ = mixer.append([0.1, 0.1], from: .microphone)
+        let mixed = mixer.append([0.5], from: .microphone)
+        XCTAssertEqual(mixed.count, 1)
+        XCTAssertEqual(mixed[0], 0.8, accuracy: 0.0001)
+    }
+
+    func testClampsLoudSum() {
+        var mixer = MeetingMixer(maxLag: 100)
+        _ = mixer.append([0.8, -0.8], from: .system)
+        XCTAssertEqual(mixer.append([0.8, -0.8], from: .microphone), [1, -1])
+    }
+
+    func testEmitsLeadingSourceAloneWhenOtherFallsTooFarBehind() {
+        var mixer = MeetingMixer(maxLag: 4)
+        XCTAssertEqual(mixer.append([0.1, 0.1, 0.1, 0.1], from: .system), [])
+        XCTAssertEqual(mixer.append([0.1], from: .system), [0.1, 0.1, 0.1, 0.1, 0.1])
+        XCTAssertEqual(mixer.append([0.2, 0.2], from: .microphone), [])
+    }
+
+    func testFlushReturnsRestPaddedWithSilence() {
+        var mixer = MeetingMixer(maxLag: 100)
+        _ = mixer.append([0.1, 0.2, 0.3], from: .system)
+        _ = mixer.append([0.1], from: .microphone)
+        let rest = mixer.flush()
+        XCTAssertEqual(rest.count, 2)
+        XCTAssertEqual(rest[0], 0.2, accuracy: 0.0001)
+        XCTAssertEqual(rest[1], 0.3, accuracy: 0.0001)
+        XCTAssertEqual(mixer.flush(), [])
+    }
+}
+
+final class VoiceProcessingPolicyTests: XCTestCase {
+    private func user(_ bundleID: String) -> MicrophoneUser {
+        MicrophoneUser(pid: 1, bundleID: bundleID, name: bundleID)
+    }
+
+    func testNotNeededWithoutOtherMicrophoneUsers() {
+        XCTAssertFalse(VoiceProcessingPolicy.isNeeded(for: []))
+    }
+
+    func testNotNeededForTeams() {
+        XCTAssertFalse(VoiceProcessingPolicy.isNeeded(for: [user("com.microsoft.teams2.modulehost")]))
+    }
+
+    func testNeededDuringMacCall() {
+        XCTAssertTrue(VoiceProcessingPolicy.isNeeded(for: [user("com.apple.avconferenced")]))
+    }
+
+    func testNeededWhenMacCallRunsAlongsideOtherApps() {
+        XCTAssertTrue(VoiceProcessingPolicy.isNeeded(for: [user("com.microsoft.teams2.modulehost"), user("com.apple.avconferenced")]))
+    }
+}

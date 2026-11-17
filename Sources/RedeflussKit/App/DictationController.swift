@@ -240,6 +240,7 @@ public final class DictationController: ObservableObject {
             return
         }
 
+        recorder.usesVoiceProcessing = VoiceProcessingPolicy.isNeeded(for: microphoneUsers)
         do {
             try recorder.start(deviceUID: settings.inputDeviceUID)
         } catch {
@@ -420,7 +421,7 @@ public final class DictationController: ObservableObject {
             return
         }
         let names = Array(Set(users.map(\.name))).sorted()
-        startMeeting(appName: names.first ?? "Meeting")
+        startMeeting(appName: names.first ?? "Meeting", users: users)
     }
 
     /// Mitschrift von Hand starten (Menü) – z. B. für ein Gespräch ohne Meeting-App.
@@ -430,12 +431,12 @@ public final class DictationController: ObservableObject {
             return
         }
         let names = microphoneUsers.map(\.name)
-        startMeeting(appName: names.first ?? "Meeting")
+        startMeeting(appName: names.first ?? "Meeting", users: microphoneUsers)
     }
 
-    private func startMeeting(appName: String) {
+    private func startMeeting(appName: String, users: [MicrophoneUser]) {
         do {
-            try meeting.start(appName: appName)
+            try meeting.start(appName: appName, voiceProcessing: VoiceProcessingPolicy.isNeeded(for: users))
         } catch {
             sounds.play(.error)
             flowBar.showMessage(error.localizedDescription, isError: true, duration: 4)

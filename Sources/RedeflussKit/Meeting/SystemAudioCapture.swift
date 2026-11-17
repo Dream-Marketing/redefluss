@@ -1,9 +1,9 @@
 import AVFoundation
 import CoreAudio
 
-/// Nimmt Systemaudio (alle anderen Programme – also die anderen Teilnehmer) und das Mikrofon
-/// gemeinsam auf: ein privates Aggregatgerät aus Ausgabegerät, Mikrofon und einem Prozess-Tap,
-/// dessen Eingangsströme zu Mono gemischt und auf 16 kHz gebracht werden.
+/// Nimmt Systemaudio (alle anderen Programme – also die anderen Teilnehmer) auf: ein privates
+/// Aggregatgerät aus Ausgabegerät und einem Prozess-Tap, dessen Eingangsströme zu Mono gemischt
+/// und auf 16 kHz gebracht werden. Das Mikrofon nimmt `MeetingRecorder` getrennt auf.
 /// Braucht macOS 14.2 und die Berechtigung „Systemaudioaufnahme" (fragt macOS beim ersten Mal selbst).
 @available(macOS 14.2, *)
 final class SystemAudioCapture {
@@ -42,8 +42,7 @@ final class SystemAudioCapture {
 
     deinit { stop() }
 
-    /// - Parameter microphoneUID: gewähltes Mikrofon; nil = Systemstandard.
-    func start(microphoneUID: String?) throws {
+    func start() throws {
         stop()
 
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
@@ -56,12 +55,9 @@ final class SystemAudioCapture {
         guard tapStatus == noErr, tap != kAudioObjectUnknown else { throw Failure.tap(tapStatus) }
         tapID = tap
 
-        // Ausgabegerät als Taktgeber (so macht es Apples Beispiel), Mikrofon als zweites Teilgerät.
+        // Ausgabegerät als Taktgeber (so macht es Apples Beispiel).
         let outputUID = AudioDevices.defaultDeviceUID(input: false)
-        let micUID = microphoneUID ?? AudioDevices.defaultDeviceUID(input: true)
-        var seen = Set<String>()
-        let subDevices: [[String: Any]] = [outputUID, micUID].compactMap { $0 }
-            .filter { seen.insert($0).inserted }
+        let subDevices: [[String: Any]] = [outputUID].compactMap { $0 }
             .map { [kAudioSubDeviceUIDKey: $0] }
 
         var aggregate: [String: Any] = [
@@ -146,7 +142,7 @@ final class SystemAudioCapture {
         }
     }
 
-    /// Alle Eingangspuffer (Mikrofon-Kanäle + Tap-Stereo) zu Mono summieren, dann auf 16 kHz wandeln.
+    /// Alle Eingangspuffer zu Mono summieren, dann auf 16 kHz wandeln.
     private func process(_ input: UnsafePointer<AudioBufferList>) {
         guard let converter, let mixFormat else { return }
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))

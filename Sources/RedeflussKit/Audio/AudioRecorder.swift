@@ -1,7 +1,10 @@
 import AVFoundation
 import AudioToolbox
 import CoreAudio
+import os.log
 import RedeflussObjC
+
+let audioLog = Logger(subsystem: "eu.dream-marketing.redefluss", category: "audio")
 
 public enum AudioRecorderError: LocalizedError {
     case noInputDevice
@@ -34,8 +37,10 @@ public final class AudioRecorder {
     public var onInterruption: (() -> Void)?
     /// Samples für `stop()` sammeln. Für lange Mitschnitte ausschalten und stattdessen `onSamples` nutzen.
     public var accumulates = true
+    public var usesVoiceProcessing = false
 
     private var engine: AVAudioEngine?
+    private var peak: Float = 0
     private var configurationObserver: NSObjectProtocol?
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -55,6 +60,7 @@ public final class AudioRecorder {
         stopEngine()
         lock.lock()
         samples.removeAll(keepingCapacity: true)
+        peak = 0
         lock.unlock()
 
         let engine = AVAudioEngine()
@@ -92,12 +98,24 @@ public final class AudioRecorder {
             try input.auAudioUnit.setDeviceID(deviceID)
         }
 
+        if usesVoiceProcessing {
+            try input.setVoiceProcessingEnabled(true)
+            input.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+                enableAdvancedDucking: false,
+                duckingLevel: .min
+            )
+        }
+
         let inputFormat = input.outputFormat(forBus: 0)
+        audioLog.notice("Mikrofon gestartet: \(inputFormat.channelCount) Kanäle, \(Int(inputFormat.sampleRate)) Hz, Sprachverarbeitung: \(input.isVoiceProcessingEnabled)")
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw AudioRecorderError.noInputDevice
         }
         guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw AudioRecorderError.converterUnavailable
+        }
+        if usesVoiceProcessing {
+            converter.channelMap = [0]
         }
 
         // Konverter im Block halten statt als Property lesen – der Tap läuft auf dem Audio-Thread,
@@ -120,6 +138,8 @@ public final class AudioRecorder {
         stopEngine()
         lock.lock()
         defer { lock.unlock() }
+        let peakDB = 20 * log10(max(peak, 1e-7))
+        audioLog.notice("Mikrofon gestoppt: Spitzenpegel \(Int(peakDB)) dB")
         let result = samples
         samples.removeAll(keepingCapacity: false)
         return result
@@ -161,11 +181,13 @@ public final class AudioRecorder {
         let chunk = UnsafeBufferPointer(start: channel, count: count)
         let level = Self.level(of: chunk)
 
+        let chunkPeak = chunk.reduce(Float(0)) { max($0, abs($1)) }
+        lock.lock()
+        peak = max(peak, chunkPeak)
         if accumulates {
-            lock.lock()
             samples.append(contentsOf: chunk)
-            lock.unlock()
         }
+        lock.unlock()
         onSamples?(Array(chunk))
 
         DispatchQueue.main.async { [weak self] in self?.onLevel?(level) }
